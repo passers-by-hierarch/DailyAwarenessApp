@@ -1,36 +1,60 @@
 @echo off
-chcp 65001 >nul
-title DailyAwarenessApp - Stop Prototype
+title DailyAwarenessApp - Stop
 
 echo ==========================================
-echo   停止 DailyAwarenessApp 原型服务
+echo   Stop DailyAwarenessApp Services
 echo ==========================================
 echo.
 
-REM 查找占用 5173 端口的进程
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :5173 ^| findstr LISTENING') do (
-    set PID=%%a
+set FOUND=0
+
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3000 ^| findstr LISTENING') do (
+    echo Prototype found (port 3000), PID: %%a
+    taskkill /F /PID %%a >nul 2>&1
+    echo Stopped
+    set FOUND=1
 )
 
-if "%PID%"=="" (
-    echo 未找到运行中的原型服务（端口 5173）
-    echo.
-    pause
-    exit /b 0
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3001 ^| findstr LISTENING') do (
+    echo Prototype found (port 3001), PID: %%a
+    taskkill /F /PID %%a >nul 2>&1
+    echo Stopped
+    set FOUND=1
 )
 
-echo 找到进程 PID: %PID%
-echo 正在停止...
-
-taskkill /F /PID %PID%
-
-if errorlevel 1 (
-    echo.
-    echo [错误] 停止失败，请手动结束进程
-) else (
-    echo.
-    echo [成功] 服务已停止
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3002 ^| findstr LISTENING') do (
+    echo Prototype found (port 3002), PID: %%a
+    taskkill /F /PID %%a >nul 2>&1
+    echo Stopped
+    set FOUND=1
 )
 
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3003 ^| findstr LISTENING') do (
+    echo Prototype found (port 3003), PID: %%a
+    taskkill /F /PID %%a >nul 2>&1
+    echo Stopped
+    set FOUND=1
+)
+
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3004 ^| findstr LISTENING') do (
+    echo Prototype found (port 3004), PID: %%a
+    taskkill /F /PID %%a >nul 2>&1
+    echo Stopped
+    set FOUND=1
+)
+
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8080 ^| findstr LISTENING') do (
+    echo Backend found (port 8080), PID: %%a
+    taskkill /F /PID %%a >nul 2>&1
+    echo Stopped
+    set FOUND=1
+)
+
+if "%FOUND%"=="0" (
+    echo No running services found
+)
+
+echo.
+echo Done
 echo.
 pause

@@ -1,34 +1,35 @@
 @echo off
-chcp 65001 >nul
 title DailyAwarenessApp - Prototype
 
 echo ==========================================
-echo   DailyAwarenessApp 原型启动脚本
+echo   DailyAwarenessApp Prototype
 echo ==========================================
 echo.
 
 cd /d "%~dp0..\web-prototype"
 
-REM 检查 node_modules 是否存在
 if not exist "node_modules" (
-    echo [1/2] 首次启动，正在安装依赖...
+    echo [1/3] First run, installing dependencies...
     call npm install
     if errorlevel 1 (
         echo.
-        echo [错误] 依赖安装失败，请检查 Node.js 是否已安装
+        echo [ERROR] Failed to install dependencies. Please check if Node.js is installed.
         pause
         exit /b 1
     )
-    echo [1/2] 依赖安装完成
+    echo [1/3] Dependencies installed
 ) else (
-    echo [1/2] 依赖已安装，跳过安装步骤
+    echo [1/3] Dependencies found, skipping install
 )
 
 echo.
-echo [2/2] 启动开发服务器...
+echo [2/3] Starting dev server...
 echo.
-echo 启动成功后，浏览器访问: http://localhost:5173/
-echo 按 Ctrl+C 可停止服务
+echo After startup, check terminal for the URL (usually http://localhost:3000/)
+echo Press Ctrl+C to stop
+echo.
+
+echo [3/3] Launching...
 echo.
 
 call npm run dev
