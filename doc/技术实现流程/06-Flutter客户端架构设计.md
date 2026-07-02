@@ -437,36 +437,36 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
 
 class AppColors {
   // 主色调
-  static const Color primary = Color(0xFF4A7C6F);
-  static const Color primaryDark = Color(0xFF3D6B5F);
-  static const Color primaryLight = Color(0xFFE8F0ED);
-  
-  // 强调色
-  static const Color accent = Color(0xFFD4A574);
-  static const Color accentLight = Color(0xFFF5E6D3);
+  static const Color primary = Color(0xFF3D8B7A);
+  static const Color primaryDark = Color(0xFF2D6B5A);
+  static const Color primaryLight = Color(0xFFE8F5F2);
+
+  // 强调色（与primary一致，自然青绿色）
+  static const Color accent = Color(0xFF3D8B7A);
+  static const Color accentLight = Color(0xFFE8F5F2);
   
   // 成功/警告/危险
-  static const Color success = Color(0xFF6B9E75);
-  static const Color warning = Color(0xFFD4A574);
-  static const Color danger = Color(0xFFC4706A);
-  
+  static const Color success = Color(0xFF34C759);
+  static const Color warning = Color(0xFFFF9500);
+  static const Color danger = Color(0xFFFF3B30);
+
   // 背景色
-  static const Color background = Color(0xFFF7F5F2);
+  static const Color background = Color(0xFFF5F5F7);
   static const Color backgroundSecondary = Color(0xFFFFFFFF);
-  
+
   // 文字色
-  static const Color ink = Color(0xFF1E1E1E);
-  static const Color inkLight = Color(0xFF8A8A8A);
-  static const Color inkLighter = Color(0xFFB8B8B8);
-  
+  static const Color ink = Color(0xFF1D1D1F);
+  static const Color inkLight = Color(0xFF86868B);
+  static const Color inkLighter = Color(0xFFAEAEB2);
+
   // 分隔线
-  static const Color rule = Color(0xFFE0DCD7);
+  static const Color rule = Color(0xFFE5E5EA);
   
   // 状态色
-  static const Color statusMatched = Color(0xFF6B9E75);
-  static const Color statusPending = Color(0xFFD4A574);
-  static const Color statusMissed = Color(0xFFC4706A);
-  static const Color statusForced = Color(0xFFC4706A);
+  static const Color statusMatched = Color(0xFF34C759);
+  static const Color statusPending = Color(0xFFFF9500);
+  static const Color statusMissed = Color(0xFFFF3B30);
+  static const Color statusForced = Color(0xFFFF3B30);
 }
 ```
 

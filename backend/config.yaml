@@ -1,0 +1,27 @@
+environment: development
+port: "8080"
+log_level: debug
+
+database:
+  host: localhost
+  port: "5432"
+  user: postgres
+  password: postgres
+  dbname: daily_awareness
+  sslmode: disable
+
+redis:
+  host: localhost
+  port: "6379"
+  password: ""
+  db: 0
+
+jwt:
+  secret: "daily-awareness-jwt-secret-change-in-production"
+  expires_in: 168
+
+ai:
+  xunfei_app_id: ""
+  xunfei_api_key: ""
+  xunfei_api_secret: ""
+  deepseek_api_key: ""

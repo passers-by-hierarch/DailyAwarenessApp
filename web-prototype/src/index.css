@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 自定义基础样式 */
+@layer base {
+  html {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  body {
+    background-color: #F5F5F7;
+    color: #1D1D1F;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  
+  /* 移动端安全区域适配 */
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* 自定义组件样式 */
+@layer components {
+  /* 语音按钮渐变背景 */
+  .voice-button-gradient {
+    background: linear-gradient(135deg, #5BAE94 0%, #3D8B7A 100%);
+  }
+  
+  /* 卡片阴影 */
+  .card-shadow {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  
+  /* 列表项阴影 */
+  .item-shadow {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  
+  /* 大按钮阴影 */
+  .button-shadow {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  }
+  
+  /* 悬浮按钮阴影 */
+  .fab-shadow {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  }
+  
+  /* 动画效果 */
+  .transition-fast {
+    transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  .transition-normal {
+    transition: all 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  /* 录音波形动画 */
+  .wave-bar {
+    animation: wave 0.5s ease-in-out infinite;
+  }
+  
+  @keyframes wave {
+    0%, 100% { transform: scaleY(0.5); }
+    50% { transform: scaleY(1); }
+  }
+  
+  /* 页面切换动画 */
+  .page-enter {
+    animation: pageEnter 250ms ease-out;
+  }
+  
+  @keyframes pageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+/* 工具类 */
+@layer utilities {
+  /* 骨架屏动画 */
+  .skeleton-pulse {
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+  }
+  
+  @keyframes skeleton-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.7; }
+  }
+}

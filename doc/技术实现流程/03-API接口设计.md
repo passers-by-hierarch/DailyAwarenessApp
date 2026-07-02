@@ -4,15 +4,15 @@
 
 ### 1.1 基本原则
 
-| 原则 | 说明 |
-|------|------|
-| **RESTful风格** | 使用标准HTTP方法（GET/POST/PUT/DELETE） |
-| **资源命名** | 使用复数名词，如 `/users`, `/agendas`, `/timeline` |
-| **版本控制** | URL路径包含版本号 `/api/v1/...` |
-| **统一响应** | 标准响应格式，包含code、message、data |
-| **错误处理** | 统一错误码定义，清晰的错误信息 |
-| **认证鉴权** | JWT Token认证，Bearer方式 |
-| **分页查询** | 使用page/pageSize或cursor分页 |
+| 原则            | 说明                                               |
+| --------------- | -------------------------------------------------- |
+| **RESTful风格** | 使用标准HTTP方法（GET/POST/PUT/DELETE）            |
+| **资源命名**    | 使用复数名词，如 `/users`, `/agendas`, `/timeline` |
+| **版本控制**    | URL路径包含版本号 `/api/v1/...`                    |
+| **统一响应**    | 标准响应格式，包含code、message、data              |
+| **错误处理**    | 统一错误码定义，清晰的错误信息                     |
+| **认证鉴权**    | JWT Token认证，Bearer方式                          |
+| **分页查询**    | 使用page/pageSize或cursor分页                      |
 
 ### 1.2 统一响应格式
 
@@ -59,38 +59,38 @@
 
 ### 1.3 HTTP状态码使用
 
-| 状态码 | 使用场景 |
-|-------|---------|
-| **200** | 成功 |
-| **201** | 创建成功 |
+| 状态码  | 使用场景               |
+| ------- | ---------------------- |
+| **200** | 成功                   |
+| **201** | 创建成功               |
 | **204** | 删除成功（无返回内容） |
-| **400** | 参数错误 |
-| **401** | 未认证/Token失效 |
-| **403** | 无权限 |
-| **404** | 资源不存在 |
-| **409** | 资源冲突 |
-| **429** | 请求频率超限 |
-| **500** | 服务端错误 |
-| **503** | 服务不可用 |
+| **400** | 参数错误               |
+| **401** | 未认证/Token失效       |
+| **403** | 无权限                 |
+| **404** | 资源不存在             |
+| **409** | 资源冲突               |
+| **429** | 请求频率超限           |
+| **500** | 服务端错误             |
+| **503** | 服务不可用             |
 
 ### 1.4 错误码定义
 
-| 错误码 | 错误类型 | 说明 |
-|-------|---------|------|
-| **40001** | INVALID_PARAM | 参数错误 |
-| **40002** | MISSING_PARAM | 缺少必填参数 |
-| **40003** | INVALID_FORMAT | 格式错误 |
-| **40101** | UNAUTHORIZED | 未认证 |
-| **40102** | TOKEN_EXPIRED | Token过期 |
-| **40103** | TOKEN_INVALID | Token无效 |
-| **40301** | FORBIDDEN | 无权限 |
-| **40401** | NOT_FOUND | 资源不存在 |
-| **40901** | CONFLICT | 资源冲突 |
-| **40902** | DUPLICATE | 资源重复 |
+| 错误码    | 错误类型       | 说明         |
+| --------- | -------------- | ------------ |
+| **40001** | INVALID_PARAM  | 参数错误     |
+| **40002** | MISSING_PARAM  | 缺少必填参数 |
+| **40003** | INVALID_FORMAT | 格式错误     |
+| **40101** | UNAUTHORIZED   | 未认证       |
+| **40102** | TOKEN_EXPIRED  | Token过期    |
+| **40103** | TOKEN_INVALID  | Token无效    |
+| **40301** | FORBIDDEN      | 无权限       |
+| **40401** | NOT_FOUND      | 资源不存在   |
+| **40901** | CONFLICT       | 资源冲突     |
+| **40902** | DUPLICATE      | 资源重复     |
 | **50001** | INTERNAL_ERROR | 服务内部错误 |
-| **50002** | DB_ERROR | 数据库错误 |
-| **50003** | ASR_ERROR | ASR服务错误 |
-| **50004** | NLP_ERROR | NLP服务错误 |
+| **50002** | DB_ERROR       | 数据库错误   |
+| **50003** | ASR_ERROR      | ASR服务错误  |
+| **50004** | NLP_ERROR      | NLP服务错误  |
 
 ---
 
@@ -1243,9 +1243,166 @@ period: week (可选)
 
 ---
 
-## 8. 用户设置接口
+## 8. 个人记忆问答接口（P2阶段）
 
-### 8.1 获取用户设置
+### 8.1 提交问题
+
+**POST /api/v1/qa/ask**
+
+请求：
+```json
+{
+  "question": "我的钥匙放在哪里了？",
+  "session_id": "session-uuid-xxx",
+  "enable_voice": true
+}
+```
+
+响应：
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "answer": "根据您的记录，钥匙放在玄关鞋柜的抽屉里（2024年6月20日记录）。",
+    "answer_voice_url": "https://cdn.example.com/voice/answer-xxx.mp3",
+    "confidence": 0.96,
+    "session_id": "session-uuid-xxx",
+    "source_records": [
+      {
+        "id": "item-record-uuid-001",
+        "timestamp": "2024-06-20T18:30:00Z",
+        "content": "钥匙：放在玄关鞋柜的抽屉里",
+        "record_type": "item",
+        "relevance_score": 0.95,
+        "behavior_tag": null,
+        "source_name": "物品位置",
+        "metadata": {}
+      }
+    ]
+  }
+}
+```
+
+### 8.2 获取问答历史
+
+**GET /api/v1/qa/history**
+
+查询参数：
+- `session_id` (可选): 会话ID，不传则返回所有历史
+- `page` (可选): 页码，默认1
+- `page_size` (可选): 每页数量，默认20
+
+响应：
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "items": [
+      {
+        "id": "qa-history-uuid-001",
+        "session_id": "session-uuid-xxx",
+        "question": "我的钥匙放在哪里了？",
+        "question_type": "item_location",
+        "answer": "根据您的记录，钥匙放在玄关鞋柜的抽屉里。",
+        "source_records": [
+          {
+            "id": "item-record-uuid-001",
+            "timestamp": "2024-06-20T18:30:00Z",
+            "content": "钥匙：放在玄关鞋柜的抽屉里",
+            "record_type": "item",
+            "relevance_score": 0.95
+          }
+        ],
+        "processing_time": 320,
+        "confidence": 0.96,
+        "created_at": "2024-06-22T14:30:00Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 20,
+      "total": 15
+    }
+  }
+}
+```
+
+### 8.3 获取会话列表
+
+**GET /api/v1/qa/sessions**
+
+响应：
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "items": [
+      {
+        "id": "session-uuid-xxx",
+        "started_at": "2024-06-22T14:00:00Z",
+        "ended_at": null,
+        "status": "active",
+        "message_count": 5
+      }
+    ]
+  }
+}
+```
+
+### 8.4 结束会话
+
+**POST /api/v1/qa/sessions/{session_id}/end**
+
+响应：
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": "session-uuid-xxx",
+    "status": "ended",
+    "ended_at": "2024-06-22T15:00:00Z"
+  }
+}
+```
+
+### 8.5 API接口数据模型
+
+#### SourceRecord（检索记录）
+
+| 字段            | 类型   | 必填 | 说明                                     |
+| --------------- | ------ | ---- | ---------------------------------------- |
+| id              | string | 是   | 记录ID                                   |
+| timestamp       | string | 是   | 记录时间（ISO 8601）                     |
+| content         | string | 是   | 内容摘要                                 |
+| record_type     | string | 是   | 记录类型：timeline/item/knowledge/agenda |
+| relevance_score | number | 是   | 相关性评分 0-1                           |
+| behavior_tag    | string | 否   | 行为标签                                 |
+| source_name     | string | 否   | 来源名称                                 |
+| metadata        | object | 否   | 额外元数据                               |
+
+#### QaHistoryItem（问答历史项）
+
+| 字段            | 类型           | 必填 | 说明             |
+| --------------- | -------------- | ---- | ---------------- |
+| id              | string         | 是   | 历史记录ID       |
+| session_id      | string         | 是   | 会话ID           |
+| question        | string         | 是   | 用户问题         |
+| question_type   | string         | 是   | 问题类型         |
+| answer          | string         | 是   | 系统回答         |
+| source_records  | SourceRecord[] | 否   | 检索记录列表     |
+| processing_time | number         | 否   | 处理耗时（毫秒） |
+| confidence      | number         | 否   | 置信度           |
+| created_at      | string         | 是   | 创建时间         |
+
+---
+
+## 9. 用户设置接口
+
+### 9.1 获取用户设置
 
 **GET /api/v1/users/settings**
 
@@ -1300,9 +1457,9 @@ period: week (可选)
 
 ---
 
-## 9. WebSocket接口
+## 10. WebSocket接口
 
-### 9.1 连接
+### 10.1 连接
 
 **WebSocket /ws/v1/connect**
 
@@ -1311,7 +1468,7 @@ period: week (可选)
 token: jwt-access-token (query参数或header)
 ```
 
-### 9.2 消息类型
+### 10.2 消息类型
 
 #### 服务端推送消息
 
@@ -1382,9 +1539,9 @@ token: jwt-access-token (query参数或header)
 
 ---
 
-## 10. API调用示例（Flutter）
+## 11. API调用示例（Flutter）
 
-### 10.1 Retrofit API客户端定义
+### 11.1 Retrofit API客户端定义
 
 ```dart
 // lib/core/network/api_client.dart
@@ -1442,10 +1599,27 @@ abstract class ApiClient {
   
   @GET("/analytics/match-rate")
   Future<ApiResponse<MatchRateResult>> getMatchRateAnalysis(@Query("period") String? period);
+  
+  // 问答（P2阶段）
+  @POST("/qa/ask")
+  Future<ApiResponse<QaAnswerResult>> askQuestion(@Body() QaAskRequest request);
+  
+  @GET("/qa/history")
+  Future<ApiResponse<QaHistoryListResult>> getQaHistory({
+    @Query("session_id") String? sessionId,
+    @Query("page") int? page,
+    @Query("page_size") int? pageSize,
+  });
+  
+  @GET("/qa/sessions")
+  Future<ApiResponse<QaSessionListResult>> getQaSessions();
+  
+  @POST("/qa/sessions/{session_id}/end")
+  Future<ApiResponse<QaSession>> endQaSession(@Path("session_id") String sessionId);
 }
 ```
 
-### 10.2 API调用示例
+### 11.2 API调用示例
 
 ```dart
 // lib/features/timeline/data/repositories/timeline_repository_impl.dart
@@ -1531,7 +1705,7 @@ class TimelineRepositoryImpl implements TimelineRepository {
 
 ---
 
-## 11. 下一步
+## 12. 下一步
 
 - [04-功能模块详细设计.md](./04-功能模块详细设计.md) - 各模块技术实现方案
 - [05-语音识别与NLP集成方案.md](./05-语音识别与NLP集成方案.md) - AI服务集成详情
