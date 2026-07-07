@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, Clock, Mic, Link, Check, X, Brain, Package, ShoppingCart, Activity, MapPin, Hash, Tag, Sparkles, Plus } from 'lucide-react'
+import { ChevronLeft, Clock, Mic, Link, Check, X, Brain, Package, ShoppingCart, Activity, MapPin, Hash, Tag, Sparkles, Plus, MessageSquare, Square, Volume2 } from 'lucide-react'
 import { useAppStore, SYSTEM_TAGS, type TagColor } from '../store/appStore'
 
 // 标签颜色映射到 Tailwind 类名
@@ -34,6 +34,8 @@ const TimelineDetailPage = () => {
   const customTags = useAppStore(s => s.customTags)
   const getTagDef = useAppStore(s => s.getTagDef)
   const addCustomTag = useAppStore(s => s.addCustomTag)
+  const addNoteToRecord = useAppStore(s => s.addNoteToRecord)
+  const deleteNoteFromRecord = useAppStore(s => s.deleteNoteFromRecord)
 
   // 标签编辑弹窗
   const [showTagEditor, setShowTagEditor] = useState(false)
@@ -47,6 +49,119 @@ const TimelineDetailPage = () => {
 
   // 删除确认
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  // 补充记录
+  const [isRecordingNote, setIsRecordingNote] = useState(false)
+  // 补充记录语音播放（TTS朗读）
+  const [playingNoteId, setPlayingNoteId] = useState<string | null>(null)
+  // 原始语音播放
+  const [isPlayingOriginal, setIsPlayingOriginal] = useState(false)
+  // 长按删除
+  const [longPressNoteId, setLongPressNoteId] = useState<string | null>(null)
+  const [showDeleteNoteConfirm, setShowDeleteNoteConfirm] = useState(false)
+
+  // 通用TTS朗读
+  const speak = (content: string, onEnd?: () => void) => {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+      // 不支持，模拟3秒
+      onEnd && setTimeout(onEnd, 3000)
+      return
+    }
+    window.speechSynthesis.cancel()
+    const utter = new window.SpeechSynthesisUtterance(content)
+    utter.lang = 'zh-CN'
+    utter.rate = 0.95
+    utter.onend = () => onEnd?.()
+    utter.onerror = () => onEnd?.()
+    window.speechSynthesis.speak(utter)
+  }
+
+  // 播放/停止原始语音
+  const handleTogglePlayOriginal = () => {
+    if (isPlayingOriginal) {
+      window.speechSynthesis?.cancel()
+      setIsPlayingOriginal(false)
+      return
+    }
+    setIsPlayingOriginal(true)
+    speak(record.content, () => setIsPlayingOriginal(false))
+  }
+
+  // 播放/停止补充记录
+  const handleTogglePlayNote = (noteId: string, content: string) => {
+    if (playingNoteId === noteId) {
+      window.speechSynthesis?.cancel()
+      setPlayingNoteId(null)
+      return
+    }
+    setPlayingNoteId(noteId)
+    speak(content, () => setPlayingNoteId(null))
+  }
+
+  // 长按删除补充记录
+  const startLongPress = (noteId: string) => {
+    const timer = setTimeout(() => {
+      setLongPressNoteId(noteId)
+      setShowDeleteNoteConfirm(true)
+    }, 600)
+    ;(window as any).__noteLongPressTimer = timer
+  }
+  const cancelLongPress = () => {
+    if ((window as any).__noteLongPressTimer) {
+      clearTimeout((window as any).__noteLongPressTimer)
+      ;(window as any).__noteLongPressTimer = null
+    }
+  }
+
+  // 模拟语音识别补充内容的候选
+  const sampleNoteRecognitions = [
+    '后来又移动到了其他地方',
+    '顺便还做了一些其他事情',
+    '当时的情况是这样的',
+    '补充一些细节信息',
+    '记得不是很清楚，大概是这个时间',
+  ]
+
+  // 开始录音（模拟3秒后自动结束）
+  const handleStartNoteVoice = () => {
+    if (isRecordingNote) return
+    setIsRecordingNote(true)
+    const timer = setTimeout(() => {
+      handleStopNoteVoice()
+    }, 3000)
+    // 用 ref 保存 timer（这里直接挂到 window 上简化）
+    ;(window as any).__noteVoiceTimer = timer
+  }
+
+  // 停止录音，模拟识别结果直接保存为补充记录
+  const handleStopNoteVoice = () => {
+    setIsRecordingNote(false)
+    if ((window as any).__noteVoiceTimer) {
+      clearTimeout((window as any).__noteVoiceTimer)
+      ;(window as any).__noteVoiceTimer = null
+    }
+    // 随机生成识别结果，直接保存
+    const randomText = sampleNoteRecognitions[Math.floor(Math.random() * sampleNoteRecognitions.length)]
+    addNoteToRecord(record.id, randomText)
+  }
+
+  // 切换录音状态
+  const handleToggleNoteVoice = () => {
+    if (isRecordingNote) {
+      handleStopNoteVoice()
+    } else {
+      handleStartNoteVoice()
+    }
+  }
+
+  // 删除补充记录
+  const handleDeleteNote = () => {
+    if (longPressNoteId) {
+      deleteNoteFromRecord(record.id, longPressNoteId)
+      setLongPressNoteId(null)
+    }
+    setShowDeleteNoteConfirm(false)
+  }
 
   // 如果记录不存在
   if (!record) {
@@ -309,8 +424,8 @@ const TimelineDetailPage = () => {
                 <span className="text-time font-mono text-text-secondary">
                   {record.time}
                 </span>
-                <span className={`px-2 py-0.5 rounded-sm text-caption ${record.status === 'matched' ? 'bg-success-light text-success' : 'bg-bg-tertiary text-text-secondary'}`}>
-                  {record.status === 'matched' ? '已匹配' : '未匹配'}
+                <span className={`px-2 py-0.5 rounded-sm text-caption ${record.status === 'matched' ? 'bg-success-light text-success' : record.matchedAgenda ? 'bg-accent-light text-accent' : 'bg-bg-tertiary text-text-secondary'}`}>
+                  {record.status === 'matched' ? '已匹配' : record.matchedAgenda ? '已创建事程' : '未匹配'}
                 </span>
               </div>
               <div className="text-body font-medium text-text-primary mt-1.5">
@@ -352,36 +467,149 @@ const TimelineDetailPage = () => {
         </div>
 
         <div className="bg-bg-secondary rounded-lg card-shadow p-4">
-          {/* 语音播放器 */}
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 bg-accent rounded-full flex items-center justify-center shrink-0">
-              <Mic size={18} className="text-white" />
+          {/* 语音播放器 - 可点击播放 */}
+          <button
+            type="button"
+            className={`w-full flex items-center gap-3 mb-3 transition-fast active:opacity-70 ${isPlayingOriginal ? 'opacity-90' : ''}`}
+            onClick={handleTogglePlayOriginal}
+          >
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-fast ${isPlayingOriginal ? 'bg-danger' : 'bg-accent'}`}>
+              {isPlayingOriginal ? <Square size={16} className="text-white fill-current" /> : <Mic size={18} className="text-white" />}
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-1">
                 {[8, 16, 12, 20, 10, 18, 14, 22, 8, 16].map((height, i) => (
                   <div
                     key={i}
-                    className="w-1 bg-accent rounded-full"
-                    style={{ height: `${height}px` }}
+                    className={`w-1 rounded-full transition-fast ${isPlayingOriginal ? 'bg-danger animate-pulse' : 'bg-accent'}`}
+                    style={{ height: `${height}px`, animationDelay: `${i * 100}ms` }}
                   />
                 ))}
               </div>
               <div className="flex justify-between mt-2">
-                <span className="text-caption text-text-tertiary">0:02</span>
-                <span className="text-caption text-text-tertiary">0:02</span>
+                <span className="text-caption text-text-tertiary">{isPlayingOriginal ? '正在播放...' : '0:02'}</span>
               </div>
             </div>
-          </div>
+          </button>
 
           {/* 文字内容 */}
           <div className="bg-bg-tertiary rounded-md p-3">
-            <div className="text-body-small text-text-primary leading-relaxed">
+            <div className={`text-body-small leading-relaxed ${isPlayingOriginal ? 'text-accent' : 'text-text-primary'}`}>
               {record.content}
             </div>
           </div>
         </div>
       </section>
+
+      {/* 补充记录 */}
+      <section className="px-4 mt-4">
+        <div className="px-1 py-2 flex items-center gap-2">
+          <MessageSquare size={16} className="text-accent" />
+          <h2 className="text-body-small font-semibold text-text-secondary">补充记录</h2>
+          <span className="text-caption text-text-tertiary ml-auto">{record.notes.length}条</span>
+        </div>
+
+        <div className="bg-bg-secondary rounded-lg card-shadow p-4">
+          {/* 已有补充记录列表 - 样式类似原始语音但稍小 */}
+          {record.notes.length > 0 && (
+            <div className="space-y-3 mb-3">
+              {record.notes.map((note) => {
+                const isPlaying = playingNoteId === note.id
+                return (
+                  <div
+                    key={note.id}
+                    className="bg-bg-tertiary rounded-md p-3 select-none"
+                    onPointerDown={() => startLongPress(note.id)}
+                    onPointerUp={cancelLongPress}
+                    onPointerLeave={cancelLongPress}
+                    onContextMenu={(e) => { e.preventDefault(); setLongPressNoteId(note.id); setShowDeleteNoteConfirm(true) }}
+                  >
+                    <div className="flex items-start gap-3">
+                      {/* 左侧时间 */}
+                      <div className="w-12 text-time font-mono text-text-secondary shrink-0 pt-0.5">
+                        {note.createdAt}
+                      </div>
+                      {/* 播放按钮 */}
+                      <button
+                        type="button"
+                        className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 transition-fast ${
+                          isPlaying ? 'bg-danger text-white' : 'bg-accent-light text-accent active:opacity-60'
+                        }`}
+                        onClick={() => handleTogglePlayNote(note.id, note.content)}
+                      >
+                        {isPlaying ? (
+                          <Square size={9} className="fill-current" />
+                        ) : (
+                          <Volume2 size={12} />
+                        )}
+                      </button>
+                      {/* 右侧文字内容 */}
+                      <div className={`flex-1 min-w-0 text-body-small leading-relaxed ${isPlaying ? 'text-accent' : 'text-text-primary'}`}>
+                        {note.content}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* 添加补充记录 - 直接开始录音 */}
+          {isRecordingNote ? (
+            <button
+              type="button"
+              className="w-full py-4 bg-danger rounded-md text-white text-body-small font-semibold flex items-center justify-center gap-2 active:bg-danger/80 transition-fast animate-pulse"
+              onClick={handleToggleNoteVoice}
+            >
+              <span className="flex items-center gap-0.5">
+                {[6, 12, 8, 14, 6, 10, 8].map((h, i) => (
+                  <span
+                    key={i}
+                    className="w-1 bg-white rounded-full animate-pulse"
+                    style={{ height: `${h}px`, animationDelay: `${i * 120}ms` }}
+                  />
+                ))}
+              </span>
+              点击停止录音，自动保存
+            </button>
+          ) : (
+            <button
+              className="w-full py-3 bg-bg-tertiary rounded-md border border-dashed border-border flex items-center justify-center gap-2 text-text-secondary active:bg-border transition-fast"
+              onClick={() => handleStartNoteVoice()}
+            >
+              <Mic size={16} />
+              <span className="text-body-small font-medium">语音补充记录</span>
+            </button>
+          )}
+          <div className="text-caption text-text-tertiary text-center mt-2">
+            长按已添加的记录可删除
+          </div>
+        </div>
+      </section>
+
+      {/* 删除补充记录确认弹窗 */}
+      {showDeleteNoteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-6">
+          <div className="absolute inset-0 bg-black/40" onClick={() => { setShowDeleteNoteConfirm(false); setLongPressNoteId(null) }} />
+          <div className="relative w-full max-w-[300px] bg-bg-secondary rounded-lg overflow-hidden">
+            <h2 className="text-title-small font-semibold text-text-primary text-center pt-6 px-5">删除这条补充记录？</h2>
+            <div className="flex gap-3 px-5 py-5">
+              <button
+                className="flex-1 py-3 bg-danger rounded-md text-white text-body-small font-medium transition-fast active:bg-danger/80"
+                onClick={handleDeleteNote}
+              >
+                删除
+              </button>
+              <button
+                className="flex-1 py-3 bg-bg-tertiary rounded-md text-text-secondary text-body-small font-medium transition-fast active:bg-border"
+                onClick={() => { setShowDeleteNoteConfirm(false); setLongPressNoteId(null) }}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 智能识别结果（仅展示有抽取数据的系统标签） */}
       {systemTagsWithData.length > 0 && (
@@ -402,26 +630,39 @@ const TimelineDetailPage = () => {
         </section>
       )}
 
-      {/* 匹配的事程 */}
+      {/* 关联的事程 */}
       {matchedAgenda ? (
         <section className="px-4 mt-4">
           <div className="px-1 py-2 flex items-center gap-2">
-            <Link size={16} className="text-success" />
-            <h2 className="text-body-small font-semibold text-text-secondary">已匹配的事程</h2>
+            {record.status === 'matched' ? (
+              <>
+                <Link size={16} className="text-success" />
+                <h2 className="text-body-small font-semibold text-text-secondary">已匹配的事程</h2>
+              </>
+            ) : (
+              <>
+                <Link size={16} className="text-accent" />
+                <h2 className="text-body-small font-semibold text-text-secondary">创建的事程</h2>
+              </>
+            )}
           </div>
 
           <div className="bg-bg-secondary rounded-lg card-shadow p-4">
             <div className="flex items-start gap-3">
-              <div className="w-10 h-10 bg-success-light rounded-lg flex items-center justify-center shrink-0">
-                <Check size={20} className="text-success" />
+              <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${record.status === 'matched' ? 'bg-success-light' : 'bg-accent-light'}`}>
+                {record.status === 'matched' ? (
+                  <Check size={20} className="text-success" />
+                ) : (
+                  <Plus size={20} className="text-accent" />
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-time font-mono text-text-secondary">
                     {matchedAgenda.time}
                   </span>
-                  <span className="px-2 py-0.5 rounded-sm bg-success-light text-caption text-success">
-                    {matchedAgenda.status}
+                  <span className={`px-2 py-0.5 rounded-sm text-caption ${record.status === 'matched' ? 'bg-success-light text-success' : 'bg-accent-light text-accent'}`}>
+                    {record.status === 'matched' ? matchedAgenda.status : '待办'}
                   </span>
                 </div>
                 <div className="text-body-small font-medium text-text-primary mt-1.5">

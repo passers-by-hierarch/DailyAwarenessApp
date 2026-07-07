@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Clock, AlertTriangle, Check, Trash2 } from 'lucide-react'
+import { Clock, AlertTriangle, Check, Trash2, XCircle } from 'lucide-react'
 
 interface AgendaItemProps {
   id: string
@@ -7,13 +7,14 @@ interface AgendaItemProps {
   content: string
   note?: string
   isMustDo: boolean
-  status: 'completed' | 'pending' | 'skipped' | 'postponed'
+  status: 'completed' | 'pending' | 'skipped' | 'postponed' | 'expired'
   remainingTime?: string
+  isHighFrequency?: boolean
   onClick?: () => void
   onDelete?: (id: string) => void
 }
 
-const AgendaItem = ({ id, time, content, note, isMustDo, status, remainingTime, onClick, onDelete }: AgendaItemProps) => {
+const AgendaItem = ({ id, time, content, note, isMustDo, status, remainingTime, isHighFrequency, onClick, onDelete }: AgendaItemProps) => {
   const [translateX, setTranslateX] = useState(0)
   const [startX, setStartX] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
@@ -31,6 +32,8 @@ const AgendaItem = ({ id, time, content, note, isMustDo, status, remainingTime, 
         return { icon: Clock, bgClass: 'bg-bg-tertiary', textClass: 'text-text-tertiary', label: '已跳过' }
       case 'postponed':
         return { icon: Clock, bgClass: 'bg-bg-tertiary', textClass: 'text-text-tertiary', label: '已推迟' }
+      case 'expired':
+        return { icon: XCircle, bgClass: 'bg-bg-tertiary', textClass: 'text-text-tertiary', label: '已过期' }
     }
   }
 
@@ -112,7 +115,7 @@ const AgendaItem = ({ id, time, content, note, isMustDo, status, remainingTime, 
         )}
       </div>
       <div
-        className={`bg-bg-secondary rounded-lg card-shadow overflow-hidden transition-transform ${isDragging ? '' : 'duration-200'} ${isMustDo ? 'border-l-4 border-danger' : ''} ${onClick ? 'cursor-pointer' : ''}`}
+        className={`bg-bg-secondary rounded-lg card-shadow overflow-hidden transition-transform ${isDragging ? '' : 'duration-200'} ${isMustDo && status !== 'expired' ? 'border-l-4 border-danger' : ''} ${onClick ? 'cursor-pointer' : ''}`}
         style={{ transform: `translateX(${translateX}px)` }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -121,18 +124,20 @@ const AgendaItem = ({ id, time, content, note, isMustDo, status, remainingTime, 
         onClick={onClick}
       >
         <div className="flex items-center p-4">
-          <div className={`w-7 h-7 rounded-full ${statusStyle.bgClass} flex items-center justify-center mr-3 shrink-0`}>
-            {isMustDo && status === 'pending' ? (
-              <AlertTriangle size={16} className={statusStyle.textClass} />
-            ) : (
-              <StatusIcon size={16} className={statusStyle.textClass} />
-            )}
+          <div className="flex flex-col items-center mr-3 shrink-0">
+            <div className={`w-7 h-7 rounded-full ${statusStyle.bgClass} flex items-center justify-center`}>
+              {isMustDo && status === 'pending' ? (
+                <AlertTriangle size={16} className={statusStyle.textClass} />
+              ) : (
+                <StatusIcon size={16} className={statusStyle.textClass} />
+              )}
+            </div>
+            {isHighFrequency && <span className="mt-1 px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded-sm text-xs font-medium">高频</span>}
           </div>
-          <div className="w-12 text-time font-mono text-text-secondary shrink-0">{time}</div>
+          <div className={`w-12 text-time font-mono shrink-0 ${status === 'expired' ? 'text-text-tertiary' : 'text-text-secondary'}`}>{time}</div>
           <div className="flex-1 pl-3 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-body font-medium text-text-primary truncate">{content}</span>
-              {isMustDo && <span className="text-caption text-danger font-medium shrink-0">(必做)</span>}
+              <span className={`text-body font-medium truncate ${status === 'expired' ? 'text-text-tertiary line-through' : 'text-text-primary'}`}>{content}</span>
             </div>
             {note && <div className="text-caption text-text-tertiary mt-1 truncate">{note}</div>}
             {status === 'pending' && remainingTime && <div className="text-caption text-text-tertiary mt-1">{remainingTime}</div>}

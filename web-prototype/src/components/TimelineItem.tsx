@@ -1,4 +1,4 @@
-import { Check, Package, ShoppingCart, Activity, MapPin, Hash } from 'lucide-react'
+import { Check, Package, ShoppingCart, Activity, MapPin, Hash, PlusCircle } from 'lucide-react'
 import { useAppStore, SYSTEM_TAGS, type TagColor } from '../store/appStore'
 
 interface TimelineItemProps {
@@ -83,11 +83,17 @@ const TimelineItem = ({ time, content, matchedAgenda, status, tags = ['event'], 
             {content}
           </div>
 
-          {/* 匹配标签 */}
+          {/* 匹配 / 创建事程标签 */}
           {status === 'matched' && matchedAgenda && (
             <div className="inline-flex items-center gap-1 mt-2 px-2.5 py-1 rounded-md bg-success-light text-success text-caption">
               <Check size={12} />
               <span>已匹配 {matchedAgenda}</span>
+            </div>
+          )}
+          {status === 'unmatched' && matchedAgenda && (
+            <div className="inline-flex items-center gap-1 mt-2 px-2.5 py-1 rounded-md bg-accent-light text-accent text-caption">
+              <PlusCircle size={12} />
+              <span>已创建事程 {matchedAgenda}</span>
             </div>
           )}
         </div>

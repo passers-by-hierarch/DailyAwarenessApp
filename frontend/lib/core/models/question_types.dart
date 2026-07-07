@@ -1,0 +1,22 @@
+enum QuestionType {
+  itemLocation,        // 物品位置
+  inventory,           // 库存查询
+  plan,                // 计划制定
+  habit,               // 习惯养成
+  timeline,            // 时间线查询
+  agenda,              // 事程/待办查询
+  stats,               // 行为统计
+  shopping,            // 购物记录
+  commonSense,         // 常识
+  template,            // 计划模板
+  badge,               // 徽章
+  stockProjection,     // 物资能用多久
+  habitAdvice,         // 习惯分析建议
+  learningAdvice,      // 学习建议
+  cycleReasoning,      // 周期推理
+  comparison,          // 对比分析
+  patternDiscovery,    // 寻找规律
+  complexQuery,        // 复杂拆解（多意图）
+  faq,                 // 常规问答
+  unknown,             // 未知类型
+}

@@ -9,8 +9,8 @@ const BottomNav = () => {
   
   const tabs = [
     { id: 'home', path: '/', icon: Home, label: '首页' },
-    { id: 'habits', path: '/habits', icon: TrendingUp, label: '习惯' },
     { id: 'ask', path: '/ask', icon: MessageCircle, label: '问一问' },
+    { id: 'habits', path: '/habits', icon: TrendingUp, label: '习惯' },
     { id: 'profile', path: '/profile', icon: User, label: '我的' },
   ]
   

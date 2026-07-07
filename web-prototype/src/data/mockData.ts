@@ -1,40 +1,60 @@
+// 生成日期字符串
+const today = new Date()
+const dateOffset = (days: number) => {
+  const d = new Date(today)
+  d.setDate(d.getDate() + days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const todayStr = dateOffset(0)
+const yesterdayStr = dateOffset(-1)
+const twoDaysAgoStr = dateOffset(-2)
+const threeDaysAgoStr = dateOffset(-3)
+const fiveDaysAgoStr = dateOffset(-5)
+
 // 模拟数据 - 时间线记录（多标签：一句话可同时属于多个类型）
-// tags: 标签ID数组，系统标签用 'behavior'|'item'|'shopping'|'event'，自定义标签用 genId()
-// extractedData: 按类型分组的抽取数据 { item: {...}, event: {...} }
 export const mockTimelineRecords = [
+  // 今天
   {
     id: '1',
+    date: todayStr,
     time: '14:30',
     content: '正在喝水',
     matchedAgenda: '15:00吃药',
     status: 'matched',
     tags: ['behavior'] as string[],
     extractedData: { behavior: { behavior: '喝水', category: '健康', duration: undefined } },
+    notes: [],
   },
   {
     id: '2',
+    date: todayStr,
     time: '12:00',
     content: '吃完午饭，准备休息',
     matchedAgenda: '12:00午饭',
     status: 'matched',
     tags: ['behavior'] as string[],
     extractedData: { behavior: { behavior: '吃午饭', category: '饮食', duration: undefined } },
+    notes: [],
   },
   {
     id: '3',
+    date: todayStr,
     time: '10:30',
     content: '回家，钥匙放在门口鞋柜上了',
     matchedAgenda: undefined,
     status: 'unmatched',
-    // 多标签：既是"事件"（回家），又是"物品位置"（放钥匙）
     tags: ['event', 'item'] as string[],
     extractedData: {
       event: { event: '回家', location: undefined },
       item: { itemName: '钥匙', location: '门口鞋柜', action: 'place' },
     },
+    notes: [
+      { id: 'note1', content: '后来又把钥匙移到了客厅茶几上', createdAt: '11:00' },
+    ],
   },
   {
     id: '4',
+    date: todayStr,
     time: '10:00',
     content: '在超市买了苹果2斤，牛奶3瓶',
     matchedAgenda: undefined,
@@ -49,27 +69,33 @@ export const mockTimelineRecords = [
         store: '超市',
       },
     },
+    notes: [],
   },
   {
     id: '5',
+    date: todayStr,
     time: '09:00',
     content: '吃完早饭，正在吃药',
     matchedAgenda: '09:00吃药',
     status: 'matched',
     tags: ['behavior'] as string[],
     extractedData: { behavior: { behavior: '吃药', category: '健康', duration: undefined } },
+    notes: [],
   },
   {
     id: '6',
+    date: todayStr,
     time: '08:15',
     content: '拿了快递',
     matchedAgenda: undefined,
     status: 'unmatched',
     tags: ['event'] as string[],
     extractedData: { event: { event: '拿快递', location: undefined } },
+    notes: [],
   },
   {
     id: '7',
+    date: todayStr,
     time: '07:30',
     content: '起床，洗漱',
     matchedAgenda: undefined,
@@ -79,6 +105,96 @@ export const mockTimelineRecords = [
       behavior: { behavior: '起床', category: '生活', duration: undefined },
       event: { event: '洗漱', location: undefined },
     },
+    notes: [],
+  },
+  // 昨天
+  {
+    id: '8',
+    date: yesterdayStr,
+    time: '19:30',
+    content: '吃完晚饭，出去散步',
+    matchedAgenda: undefined,
+    status: 'unmatched',
+    tags: ['behavior', 'custom_sport'] as string[],
+    extractedData: { behavior: { behavior: '散步', category: '运动', duration: undefined } },
+    notes: [],
+  },
+  {
+    id: '9',
+    date: yesterdayStr,
+    time: '15:00',
+    content: '吃了降压药',
+    matchedAgenda: '15:00吃降压药',
+    status: 'matched',
+    tags: ['behavior'] as string[],
+    extractedData: { behavior: { behavior: '吃药', category: '健康', duration: undefined } },
+    notes: [],
+  },
+  {
+    id: '10',
+    date: yesterdayStr,
+    time: '12:30',
+    content: '午觉睡了一个小时',
+    matchedAgenda: undefined,
+    status: 'unmatched',
+    tags: ['behavior'] as string[],
+    extractedData: { behavior: { behavior: '睡午觉', category: '休息', duration: undefined } },
+    notes: [],
+  },
+  // 前天
+  {
+    id: '11',
+    date: twoDaysAgoStr,
+    time: '10:00',
+    content: '去社区医院复诊',
+    matchedAgenda: undefined,
+    status: 'unmatched',
+    tags: ['event', 'custom_medical'] as string[],
+    extractedData: { event: { event: '去医院复诊', location: '社区医院' } },
+    notes: [],
+  },
+  {
+    id: '12',
+    date: twoDaysAgoStr,
+    time: '08:00',
+    content: '吃了早饭和降压药',
+    matchedAgenda: '08:00吃药',
+    status: 'matched',
+    tags: ['behavior'] as string[],
+    extractedData: { behavior: { behavior: '吃药', category: '健康', duration: undefined } },
+    notes: [],
+  },
+  // 3天前
+  {
+    id: '13',
+    date: threeDaysAgoStr,
+    time: '16:00',
+    content: '陪孙子去公园玩',
+    matchedAgenda: undefined,
+    status: 'unmatched',
+    tags: ['event', 'custom_family'] as string[],
+    extractedData: { event: { event: '陪孙子去公园', location: '公园' } },
+    notes: [],
+  },
+  // 5天前
+  {
+    id: '14',
+    date: fiveDaysAgoStr,
+    time: '09:30',
+    content: '在菜市场买了白菜一颗，猪肉半斤',
+    matchedAgenda: undefined,
+    status: 'unmatched',
+    tags: ['shopping'] as string[],
+    extractedData: {
+      shopping: {
+        items: [
+          { name: '白菜', quantity: '1', unit: '颗' },
+          { name: '猪肉', quantity: '500', unit: '克' },
+        ],
+        store: '菜市场',
+      },
+    },
+    notes: [],
   },
 ]
 
@@ -124,8 +240,10 @@ export const mockShoppingRecords = [
 
 // 模拟数据 - 事程记录
 export const mockAgendaItems = [
+  // 今天
   {
     id: '1',
+    date: todayStr,
     time: '09:00',
     content: '吃药',
     note: '降压药，饭后服用',
@@ -135,6 +253,7 @@ export const mockAgendaItems = [
   },
   {
     id: '2',
+    date: todayStr,
     time: '12:00',
     content: '吃午饭',
     note: undefined,
@@ -144,15 +263,18 @@ export const mockAgendaItems = [
   },
   {
     id: '3',
+    date: todayStr,
     time: '15:00',
     content: '吃降压药',
     note: undefined,
     isMustDo: true,
     status: 'pending',
     remainingTime: '还有30分钟',
+    isHighFrequency: true,
   },
   {
     id: '4',
+    date: todayStr,
     time: '18:00',
     content: '运动',
     note: '散步30分钟',
@@ -162,12 +284,86 @@ export const mockAgendaItems = [
   },
   {
     id: '5',
+    date: todayStr,
     time: '21:00',
     content: '吃安眠药',
-    note: '(必做)',
+    note: undefined,
     isMustDo: true,
     status: 'pending',
     remainingTime: '还有6小时',
+    isHighFrequency: true,
+  },
+  // 昨天
+  {
+    id: '6',
+    date: yesterdayStr,
+    time: '08:00',
+    content: '吃降压药',
+    note: undefined,
+    isMustDo: true,
+    status: 'completed',
+    remainingTime: undefined,
+  },
+  {
+    id: '7',
+    date: yesterdayStr,
+    time: '12:00',
+    content: '吃午饭',
+    note: undefined,
+    isMustDo: false,
+    status: 'completed',
+    remainingTime: undefined,
+  },
+  {
+    id: '8',
+    date: yesterdayStr,
+    time: '15:00',
+    content: '吃降压药',
+    note: undefined,
+    isMustDo: true,
+    status: 'completed',
+    remainingTime: undefined,
+  },
+  {
+    id: '9',
+    date: yesterdayStr,
+    time: '19:30',
+    content: '散步',
+    note: '小区里走一圈',
+    isMustDo: false,
+    status: 'completed',
+    remainingTime: undefined,
+  },
+  // 前天
+  {
+    id: '10',
+    date: twoDaysAgoStr,
+    time: '08:00',
+    content: '吃药',
+    note: undefined,
+    isMustDo: true,
+    status: 'completed',
+    remainingTime: undefined,
+  },
+  {
+    id: '11',
+    date: twoDaysAgoStr,
+    time: '10:00',
+    content: '去社区医院复诊',
+    note: undefined,
+    isMustDo: true,
+    status: 'completed',
+    remainingTime: undefined,
+  },
+  {
+    id: '12',
+    date: twoDaysAgoStr,
+    time: '12:30',
+    content: '午饭',
+    note: undefined,
+    isMustDo: false,
+    status: 'completed',
+    remainingTime: undefined,
   },
 ]
 

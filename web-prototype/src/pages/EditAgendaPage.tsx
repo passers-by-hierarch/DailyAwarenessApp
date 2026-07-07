@@ -1,31 +1,33 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, Clock, Bell, AlertTriangle, Tag, MapPin, Cloud, Link, Mic, Edit3, Save } from 'lucide-react'
+import { ChevronLeft, Save, Mic, AlertTriangle, Clock, Sparkles } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 
 const EditAgendaPage = () => {
   const navigate = useNavigate()
   const { id } = useParams()
 
-  // 从 store 获取事程（编辑模式）和操作方法
   const existingAgenda = useAppStore(s => s.agendaItems.find(a => a.id === id))
   const addAgenda = useAppStore(s => s.addAgenda)
   const updateAgenda = useAppStore(s => s.updateAgenda)
+  const submitVoiceRecord = useAppStore(s => s.submitVoiceRecord)
+  const inferAgendaTimeByContent = useAppStore(s => s.inferAgendaTimeByContent)
+  const inferAgendaTimeByCommonSense = useAppStore(s => s.inferAgendaTimeByCommonSense)
 
-  // 是否为编辑模式
   const isEditMode = !!id
 
-  // 事程基础信息
   const [agenda, setAgenda] = useState({
-    icon: '💊',
-    time: '15:00',
+    icon: '📋',
+    time: '',
     content: '',
     isMustDo: false,
-    category: '生活',
-    note: '',
   })
 
-  // 编辑模式下，用 store 中的事程数据预填表单
+  // 语音录入状态
+  const [isRecording, setIsRecording] = useState(false)
+  const [voiceHint, setVoiceHint] = useState('')
+  const recordTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   useEffect(() => {
     if (isEditMode && existingAgenda) {
       setAgenda({
@@ -33,58 +35,111 @@ const EditAgendaPage = () => {
         time: existingAgenda.time,
         content: existingAgenda.content,
         isMustDo: existingAgenda.isMustDo,
-        category: existingAgenda.category || '生活',
-        note: existingAgenda.note || '',
       })
+    } else {
+      // 创建模式：默认当前时间
+      const now = new Date()
+      setAgenda(prev => ({
+        ...prev,
+        time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+      }))
     }
   }, [isEditMode, existingAgenda])
 
-  // 提醒级别
-  const [reminderLevel, setReminderLevel] = useState('普通')
+  // 按住开始语音录入
+  const handleVoiceStart = () => {
+    setIsRecording(true)
+    setVoiceHint('正在录音...松开自动识别')
+    // 3秒后自动停止
+    recordTimerRef.current = setTimeout(() => {
+      handleVoiceEnd()
+    }, 3000)
+  }
 
-  // 提醒方式开关
-  const [reminderMethods, setReminderMethods] = useState([
-    { id: '1', name: '通知栏', enabled: true },
-    { id: '2', name: '声音', enabled: true },
-    { id: '3', name: '震动', enabled: true },
-    { id: '4', name: '弹窗', enabled: true },
-    { id: '5', name: '语音播报', enabled: false },
-  ])
+  // 松开结束语音录入，模拟识别
+  const handleVoiceEnd = () => {
+    if (recordTimerRef.current) {
+      clearTimeout(recordTimerRef.current)
+      recordTimerRef.current = null
+    }
+    setIsRecording(false)
+    setVoiceHint('')
 
-  // 时间设置
-  const [timeSettings, setTimeSettings] = useState({
-    advanceTime: '10分钟',
-    repeatInterval: '5分钟',
-    maxTimes: '5次',
-  })
+    // 模拟语音识别结果（测试用）
+    const sampleTexts = ['记得吃药', '下午3点开会', '别忘了喝水', '晚饭后散步']
+    const text = sampleTexts[Math.floor(Math.random() * sampleTexts.length)]
 
-  // 行为选项
-  const [behaviorOptions, setBehaviorOptions] = useState({
-    allowDelay: false,
-    allowSkip: false,
-  })
+    // 用 parseVoiceText 解析时间和内容
+    const result = submitVoiceRecord(text)
+    // 从解析结果中提取时间和内容
+    if (result.isAgendaCreation && result.agendaCreated > 0) {
+      // 从 pendingAgendaConfirm 中获取最新添加的
+      // 但这里我们直接解析文本更简单
+    }
 
-  // 输入框组件
-  const InputField = ({ label, value, placeholder, onChange }: { label: string; value: string; placeholder?: string; onChange: (value: string) => void }) => (
-    <div className="mb-4">
-      <label className="text-body-small font-semibold text-text-secondary mb-2 block">{label}</label>
-      <input
-        type="text"
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-bg-tertiary rounded-md px-4 py-3 text-body text-text-primary outline-none focus:ring-2 focus:ring-accent placeholder:text-text-tertiary"
-      />
-    </div>
-  )
+    // 直接从文本中提取
+    let extractedTime = ''
+    let extractedContent = text
 
-  // 切换提醒方式
-  const toggleReminderMethod = (id: string) => {
-    setReminderMethods(
-      reminderMethods.map(method =>
-        method.id === id ? { ...method, enabled: !method.enabled } : method
-      )
-    )
+    // 提取时间
+    const hhmmMatch = text.match(/(\d{1,2})[:：](\d{2})/)
+    const pointMatch = text.match(/(\d{1,2})点(?:(\d{1,2})分)?/)
+    const periodMatch = text.match(/(早上|上午|中午|下午|晚上|凌晨)(\d{1,2})?(?:点)?(?:(\d{1,2})分)?/)
+
+    if (hhmmMatch) {
+      extractedTime = `${String(Number(hhmmMatch[1])).padStart(2, '0')}:${hhmmMatch[2]}`
+    } else if (pointMatch) {
+      const hour = Number(pointMatch[1])
+      const min = pointMatch[2] ? Number(pointMatch[2]) : 0
+      let finalHour = hour
+      if ((text.includes('下午') || text.includes('晚上')) && hour < 12) finalHour = hour + 12
+      extractedTime = `${String(finalHour).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+    } else if (periodMatch) {
+      const period = periodMatch[1]
+      const hour = periodMatch[2] ? Number(periodMatch[2]) : null
+      const min = periodMatch[3] ? Number(periodMatch[3]) : 0
+      if (hour !== null) {
+        let finalHour = hour
+        if ((period === '下午' || period === '晚上') && hour < 12) finalHour = hour + 12
+        extractedTime = `${String(finalHour).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+      }
+    }
+
+    // 提取内容（去掉提醒词和时间）
+    extractedContent = text
+      .replace(/^(记得|别忘了|提醒我|要记得|一定要|需要|要做|得去|准备)[，, ]?/, '')
+      .replace(/(早上|上午|中午|下午|晚上|凌晨)?\d{1,2}点(?:\d{1,2}分)?[钟]?[，, ]?/, '')
+      .replace(/\d{1,2}[:：]\d{2}[，, ]?/, '')
+      .trim()
+
+    // 如果没有明确时间，智能推断
+    if (!extractedTime) {
+      const fromHistory = inferAgendaTimeByContent(extractedContent)
+      if (fromHistory) {
+        extractedTime = fromHistory
+        setVoiceHint(`根据您的习惯推荐: ${fromHistory}`)
+      } else {
+        const fromCommon = inferAgendaTimeByCommonSense(extractedContent)
+        if (fromCommon) {
+          extractedTime = fromCommon
+          setVoiceHint(`根据常识推荐: ${fromCommon}`)
+        } else {
+          const now = new Date()
+          extractedTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+          setVoiceHint('使用当前时间')
+        }
+      }
+    } else {
+      setVoiceHint('已识别时间')
+    }
+
+    setAgenda(prev => ({
+      ...prev,
+      time: extractedTime,
+      content: extractedContent,
+    }))
+
+    setTimeout(() => setVoiceHint(''), 3000)
   }
 
   // 保存事程
@@ -98,24 +153,18 @@ const EditAgendaPage = () => {
       return
     }
     if (isEditMode && existingAgenda) {
-      // 编辑模式：更新现有事程
       updateAgenda(existingAgenda.id, {
         icon: agenda.icon,
         time: agenda.time,
         content: agenda.content,
         isMustDo: agenda.isMustDo,
-        category: agenda.category,
-        note: agenda.note,
       })
     } else {
-      // 创建模式：新增事程
       addAgenda({
         icon: agenda.icon,
         time: agenda.time,
         content: agenda.content,
         isMustDo: agenda.isMustDo,
-        category: agenda.category,
-        note: agenda.note,
       })
     }
     navigate(-1)
@@ -141,22 +190,69 @@ const EditAgendaPage = () => {
         </button>
       </header>
 
-      {/* 基本信息 */}
+      {/* 语音录入区 */}
       <section className="px-4 pt-4">
-        <div className="px-1 py-2 flex items-center gap-2">
-          <Edit3 size={16} className="text-accent" />
-          <h2 className="text-body-small font-semibold text-text-secondary">基本信息</h2>
-        </div>
+        <button
+          className={`w-full rounded-lg flex items-center justify-center gap-3 transition-fast active:scale-[0.98] h-14 ${
+            isRecording
+              ? 'bg-danger text-white animate-pulse'
+              : 'bg-accent text-white button-shadow'
+          }`}
+          onPointerDown={handleVoiceStart}
+          onPointerUp={handleVoiceEnd}
+          onPointerLeave={() => isRecording && handleVoiceEnd()}
+        >
+          <Mic size={22} />
+          <span className="text-body font-medium">
+            {isRecording ? '松开自动识别' : '按住说话，创建事程'}
+          </span>
+        </button>
+        {voiceHint && (
+          <div className="mt-2 flex items-center justify-center gap-1.5 text-caption text-accent">
+            <Sparkles size={12} />
+            {voiceHint}
+          </div>
+        )}
+      </section>
 
+      {/* 基本信息 */}
+      <section className="px-4 mt-4">
         <div className="bg-bg-secondary rounded-lg card-shadow p-4">
+          {/* 时间 */}
+          <div className="mb-4">
+            <label className="text-body-small font-semibold text-text-secondary mb-2 flex items-center gap-1.5">
+              <Clock size={14} />
+              事程时间
+            </label>
+            <input
+              type="text"
+              value={agenda.time}
+              placeholder="例如: 15:00"
+              onChange={(e) => setAgenda({ ...agenda, time: e.target.value })}
+              className="w-full bg-bg-tertiary rounded-md px-4 py-3 text-body text-text-primary outline-none focus:ring-2 focus:ring-accent placeholder:text-text-tertiary"
+            />
+          </div>
+
+          {/* 内容 */}
+          <div className="mb-4">
+            <label className="text-body-small font-semibold text-text-secondary mb-2 block">事程内容</label>
+            <input
+              type="text"
+              value={agenda.content}
+              placeholder="例如: 吃药"
+              onChange={(e) => setAgenda({ ...agenda, content: e.target.value })}
+              className="w-full bg-bg-tertiary rounded-md px-4 py-3 text-body text-text-primary outline-none focus:ring-2 focus:ring-accent placeholder:text-text-tertiary"
+            />
+          </div>
+
           {/* 图标选择 */}
           <div className="mb-4">
-            <label className="text-body-small font-semibold text-text-secondary mb-2 block">事程图标</label>
+            <label className="text-body-small font-semibold text-text-secondary mb-2 block">图标</label>
             <div className="flex gap-2 overflow-x-auto pb-2">
-              {['💊', '🍚', '💧', '🏃', '📖', '🛏', '📱', '🧹', '🛒', '✈️'].map((icon) => (
+              {['📋', '💊', '🍚', '💧', '🏃', '📖', '🛏', '🧹', '🛒', '✈️'].map((icon) => (
                 <button
                   key={icon}
-                  className={`w-12 h-12 bg-bg-tertiary rounded-lg flex items-center justify-center text-2xl transition-fast ${
+                  className={`w-11 h-11 bg-bg-tertiary rounded-lg flex items-center justify-center text-xl transition-fast shrink-0 ${
                     agenda.icon === icon ? 'ring-2 ring-accent bg-accent-light' : 'active:bg-bg-tertiary'
                   }`}
                   onClick={() => setAgenda({ ...agenda, icon })}
@@ -167,57 +263,13 @@ const EditAgendaPage = () => {
             </div>
           </div>
 
-          {/* 时间 */}
-          <InputField
-            label="事程时间"
-            value={agenda.time}
-            placeholder="例如: 15:00"
-            onChange={(value) => setAgenda({ ...agenda, time: value })}
-          />
-
-          {/* 内容 */}
-          <InputField
-            label="事程内容"
-            value={agenda.content}
-            placeholder="例如: 吃药"
-            onChange={(value) => setAgenda({ ...agenda, content: value })}
-          />
-
-          {/* 分类 */}
-          <div className="mb-4">
-            <label className="text-body-small font-semibold text-text-secondary mb-2 block">事程分类</label>
-            <div className="flex gap-2 overflow-x-auto pb-2">
-              {['健康', '饮食', '运动', '学习', '生活', '工作', '社交'].map((cat) => (
-                <button
-                  key={cat}
-                  className={`px-4 py-2 rounded-md text-body-small font-medium transition-fast ${
-                    agenda.category === cat
-                      ? 'bg-accent text-white'
-                      : 'bg-bg-tertiary text-text-secondary active:bg-border'
-                  }`}
-                  onClick={() => setAgenda({ ...agenda, category: cat })}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 备注 */}
-          <InputField
-            label="备注"
-            value={agenda.note}
-            placeholder="例如: 饭后服用"
-            onChange={(value) => setAgenda({ ...agenda, note: value })}
-          />
-
           {/* 必做标记 */}
           <div className="flex items-center justify-between py-3 border-t border-border">
             <div className="flex items-center gap-2">
               <AlertTriangle size={18} className="text-danger" />
               <div>
                 <div className="text-body-small font-medium text-text-primary">必做事程</div>
-                <div className="text-caption text-text-tertiary">强制提醒,不可跳过</div>
+                <div className="text-caption text-text-tertiary">强制提醒，不可跳过</div>
               </div>
             </div>
             <button
@@ -236,249 +288,25 @@ const EditAgendaPage = () => {
         </div>
       </section>
 
-      {/* 提醒规则 */}
-      <section className="px-4 mt-4">
-        <div className="px-1 py-2 flex items-center gap-2">
-          <Bell size={16} className="text-accent" />
-          <h2 className="text-body-small font-semibold text-text-secondary">提醒规则</h2>
+      {/* 提示 */}
+      <div className="px-4 mt-4">
+        <div className="bg-info-light rounded-md px-4 py-3">
+          <p className="text-caption text-info">
+            提醒规则可在「我的 → 提醒规则」中统一设置
+          </p>
         </div>
+      </div>
 
-        <div className="bg-bg-secondary rounded-lg card-shadow p-4">
-          {/* 提醒级别 */}
-          <div className="mb-4">
-            <label className="text-body-small font-semibold text-text-secondary mb-2 block">提醒级别</label>
-            <div className="flex gap-2">
-              {['普通', '重要', '必做'].map((level) => (
-                <button
-                  key={level}
-                  className={`flex-1 py-2.5 rounded-md text-body-small font-medium transition-fast ${
-                    reminderLevel === level
-                      ? level === '必做' ? 'bg-danger text-white' :
-                        level === '重要' ? 'bg-warning text-white' : 'bg-accent text-white'
-                      : 'bg-bg-tertiary text-text-secondary active:bg-border'
-                  }`}
-                  onClick={() => setReminderLevel(level)}
-                >
-                  {level}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 提醒方式 */}
-          <div className="mb-4">
-            <label className="text-body-small font-semibold text-text-secondary mb-2 block">提醒方式</label>
-            <div className="flex flex-wrap gap-2">
-              {reminderMethods.map((method) => (
-                <button
-                  key={method.id}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-md transition-fast ${
-                    method.enabled
-                      ? 'bg-success-light text-success'
-                      : 'bg-bg-tertiary text-text-tertiary'
-                  }`}
-                  onClick={() => toggleReminderMethod(method.id)}
-                >
-                  <div className={`w-4 h-4 rounded-full border-2 ${
-                    method.enabled ? 'bg-success border-success' : 'border-text-tertiary'
-                  }`} />
-                  <span className="text-caption">{method.name}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 时间设置 */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between py-2.5 border-b border-border">
-              <span className="text-body-small text-text-secondary">提前提醒时间</span>
-              <div className="flex gap-2">
-                {['5分钟', '10分钟', '15分钟', '20分钟'].map((time) => (
-                  <button
-                    key={time}
-                    className={`px-3 py-1 rounded-sm text-caption transition-fast ${
-                      timeSettings.advanceTime === time
-                        ? 'bg-accent text-white'
-                        : 'bg-bg-tertiary text-text-secondary active:bg-border'
-                    }`}
-                    onClick={() => setTimeSettings({ ...timeSettings, advanceTime: time })}
-                  >
-                    {time}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between py-2.5 border-b border-border">
-              <span className="text-body-small text-text-secondary">重复提醒间隔</span>
-              <div className="flex gap-2">
-                {['5分钟', '10分钟', '15分钟'].map((time) => (
-                  <button
-                    key={time}
-                    className={`px-3 py-1 rounded-sm text-caption transition-fast ${
-                      timeSettings.repeatInterval === time
-                        ? 'bg-accent text-white'
-                        : 'bg-bg-tertiary text-text-secondary active:bg-border'
-                    }`}
-                    onClick={() => setTimeSettings({ ...timeSettings, repeatInterval: time })}
-                  >
-                    {time}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between py-2.5">
-              <span className="text-body-small text-text-secondary">最大提醒次数</span>
-              <div className="flex gap-2">
-                {['3次', '5次', '10次'].map((times) => (
-                  <button
-                    key={times}
-                    className={`px-3 py-1 rounded-sm text-caption transition-fast ${
-                      timeSettings.maxTimes === times
-                        ? 'bg-accent text-white'
-                        : 'bg-bg-tertiary text-text-secondary active:bg-border'
-                    }`}
-                    onClick={() => setTimeSettings({ ...timeSettings, maxTimes: times })}
-                  >
-                    {times}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 行为选项 */}
-      <section className="px-4 mt-4">
-        <div className="px-1 py-2 flex items-center gap-2">
-          <Tag size={16} className="text-accent" />
-          <h2 className="text-body-small font-semibold text-text-secondary">行为选项</h2>
-        </div>
-
-        <div className="bg-bg-secondary rounded-lg card-shadow p-4">
-          {/* 允许延后 */}
-          <div className="flex items-center justify-between py-3 border-b border-border">
-            <div className="flex items-center gap-2">
-              <Clock size={18} className="text-text-secondary" />
-              <div>
-                <div className="text-body-small font-medium text-text-primary">允许延后</div>
-                <div className="text-caption text-text-tertiary">用户可推迟提醒</div>
-              </div>
-            </div>
-            <button
-              className={`relative w-11 h-6 rounded-full transition-fast ${
-                behaviorOptions.allowDelay ? 'bg-success' : 'bg-bg-tertiary'
-              }`}
-              onClick={() => setBehaviorOptions({ ...behaviorOptions, allowDelay: !behaviorOptions.allowDelay })}
-              disabled={agenda.isMustDo}
-            >
-              <div
-                className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-fast ${
-                  behaviorOptions.allowDelay ? 'left-[22px]' : 'left-0.5'
-                } ${agenda.isMustDo ? 'opacity-50' : ''}`}
-              />
-            </button>
-          </div>
-
-          {/* 允许跳过 */}
-          <div className="flex items-center justify-between py-3">
-            <div className="flex items-center gap-2">
-              <Tag size={18} className="text-text-secondary" />
-              <div>
-                <div className="text-body-small font-medium text-text-primary">允许跳过</div>
-                <div className="text-caption text-text-tertiary">用户可跳过事程</div>
-              </div>
-            </div>
-            <button
-              className={`relative w-11 h-6 rounded-full transition-fast ${
-                behaviorOptions.allowSkip ? 'bg-success' : 'bg-bg-tertiary'
-              }`}
-              onClick={() => setBehaviorOptions({ ...behaviorOptions, allowSkip: !behaviorOptions.allowSkip })}
-              disabled={agenda.isMustDo}
-            >
-              <div
-                className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-fast ${
-                  behaviorOptions.allowSkip ? 'left-[22px]' : 'left-0.5'
-                } ${agenda.isMustDo ? 'opacity-50' : ''}`}
-              />
-            </button>
-          </div>
-
-          {agenda.isMustDo && (
-            <div className="mt-3 bg-danger-light rounded-md p-3 text-caption text-danger">
-              必做事程不允许延后或跳过
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* 条件触发 */}
-      <section className="px-4 mt-4">
-        <div className="px-1 py-2 flex items-center gap-2">
-          <MapPin size={16} className="text-accent" />
-          <h2 className="text-body-small font-semibold text-text-secondary">条件触发(可选)</h2>
-        </div>
-
-        <div className="bg-bg-secondary rounded-lg card-shadow p-4">
-          {/* 地理位置触发 */}
-          <div className="flex items-center gap-3 py-3 border-b border-border">
-            <div className="w-8 h-8 bg-bg-tertiary rounded-md flex items-center justify-center">
-              <MapPin size={16} className="text-text-secondary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-body-small font-medium text-text-primary">地理位置触发</div>
-              <div className="text-caption text-text-tertiary mt-0.5">到达指定地点时提醒</div>
-            </div>
-            <button className="text-info text-caption font-medium">设置</button>
-          </div>
-
-          {/* 天气条件触发 */}
-          <div className="flex items-center gap-3 py-3 border-b border-border">
-            <div className="w-8 h-8 bg-bg-tertiary rounded-md flex items-center justify-center">
-              <Cloud size={16} className="text-text-secondary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-body-small font-medium text-text-primary">天气条件触发</div>
-              <div className="text-caption text-text-tertiary mt-0.5">根据天气变化提醒</div>
-            </div>
-            <button className="text-info text-caption font-medium">设置</button>
-          </div>
-
-          {/* 行为链触发 */}
-          <div className="flex items-center gap-3 py-3">
-            <div className="w-8 h-8 bg-bg-tertiary rounded-md flex items-center justify-center">
-              <Link size={16} className="text-text-secondary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-body-small font-medium text-text-primary">行为链触发</div>
-              <div className="text-caption text-text-tertiary mt-0.5">某行为完成后提醒</div>
-            </div>
-            <button className="text-info text-caption font-medium">设置</button>
-          </div>
-        </div>
-      </section>
-
-      {/* 快速录入 */}
-      <section className="px-4 mt-4">
-        <button className="w-full py-4 bg-accent-light rounded-lg text-accent text-body-small font-medium flex items-center justify-center gap-2 transition-fast active:bg-accent/10">
-          <Mic size={18} />
-          语音快速录入事程
-        </button>
-      </section>
-
-      {/* 底部操作按钮 */}
-      <div className="sticky bottom-0 left-0 right-0 bg-bg-secondary border-t border-border px-4 py-3 flex gap-3 z-40 safe-area-bottom">
+      {/* 底部保存按钮 */}
+      <div className="sticky bottom-0 left-0 right-0 bg-bg-secondary border-t border-border px-4 py-3 flex gap-3 z-40">
         <button
           className="flex-1 py-3 bg-accent rounded-md text-white text-body-small font-medium transition-fast active:bg-text-primary button-shadow"
           onClick={handleSave}
         >
           {isEditMode ? '保存事程' : '创建事程'}
         </button>
-
         <button
-          className="flex-1 py-3 bg-danger-light rounded-md text-danger text-body-small font-medium transition-fast active:bg-danger-light/80"
+          className="flex-1 py-3 bg-bg-tertiary rounded-md text-text-secondary text-body-small font-medium transition-fast active:bg-border"
           onClick={() => navigate(-1)}
         >
           取消

@@ -8,7 +8,7 @@ import {
 
 // ===== 类型定义 =====
 export type TimelineType = 'behavior' | 'item' | 'shopping' | 'event'
-export type AgendaStatus = 'pending' | 'completed' | 'postponed'
+export type AgendaStatus = 'pending' | 'completed' | 'postponed' | 'expired'
 
 // ===== 标签系统 =====
 export type TagColor = 'accent' | 'info' | 'warning' | 'success' | 'danger' | 'gray' | 'purple'
@@ -34,22 +34,27 @@ export const SYSTEM_TAGS: TagDef[] = [
 // 自定义标签数量上限
 export const MAX_CUSTOM_TAGS = 20
 
+export interface NoteEntry {
+  id: string
+  content: string
+  createdAt: string
+}
+
 export interface TimelineRecord {
   id: string
+  date: string
   time: string
   content: string
   matchedAgenda?: string
   status: 'matched' | 'unmatched'
-  // 标签ID数组（兼容系统标签 + 自定义标签）
-  // 系统4个: 'behavior' | 'item' | 'shopping' | 'event'
-  // 自定义: genId() 生成的ID
   tags: string[]
-  // 每种类型对应的结构化抽取数据 { item: {...}, event: {...} }
   extractedData: Partial<Record<string, any>>
+  notes: NoteEntry[]
 }
 
 export interface AgendaItem {
   id: string
+  date: string
   time: string
   content: string
   note?: string
@@ -58,6 +63,34 @@ export interface AgendaItem {
   remainingTime?: string
   category?: string
   icon?: string
+  isHighFrequency?: boolean
+}
+
+export interface DailyAgenda {
+  id: string
+  time: string
+  content: string
+  icon: string
+  isMustDo: boolean
+  category: string
+  enabled: boolean
+}
+
+export interface AgendaRecommendation {
+  id: string
+  content: string
+  time: string
+  icon: string
+  frequency: number
+  source: 'history' | 'common-sense'
+}
+
+export interface PendingAgendaItem {
+  id: string
+  content: string
+  time: string
+  isMustDo: boolean
+  timeSource: 'user-specified' | 'history' | 'common-sense' | 'current'
 }
 
 export interface ShoppingItem {
@@ -101,6 +134,8 @@ export function parseVoiceText(text: string): {
   sideEffects?: {
     shoppingRecord?: Omit<ShoppingRecord, 'id'>
     itemUpdate?: { name: string; location: string }
+    agenda?: Omit<AgendaItem, 'id' | 'date'>
+    agendaList?: Omit<AgendaItem, 'id' | 'date'>[]
   }
 } {
   const t = text.trim()
@@ -109,6 +144,7 @@ export function parseVoiceText(text: string): {
   let sideEffects: {
     shoppingRecord?: Omit<ShoppingRecord, 'id'>
     itemUpdate?: { name: string; location: string }
+    agenda?: Omit<AgendaItem, 'id' | 'date'>
   } = {}
 
   // 1) 物品位置：匹配 "XX放在YY" 或 "把XX放在YY"
@@ -170,6 +206,170 @@ export function parseVoiceText(text: string): {
     extractedData.event = { event: t, location: undefined }
   }
 
+  // 5) 事程识别：AI判断用户是在"汇报已完成"还是"设置提醒"
+  //    - 完成时/进行时 → 匹配已有事程（标记完成）
+  //    - 将来时/计划时 → 创建新事程（待办）
+  //    支持一句话拆多个事程
+
+  const reminderKeywords = ['记得', '别忘了', '提醒我', '要记得', '一定要', '需要', '要做', '得去', '准备']
+  const mustDoKeywords = ['必做', '必须', '一定', '务必']
+  // 完成时 / 进行时信号词 → 表示正在做或已经做完
+  const completedKeywords = [
+    '正在', '在', '刚', '刚刚', '已经', '过了', '完了', '吃完了', '喝完了',
+    '吃过了', '喝过了', '做完了', '了',
+  ]
+  // 明确的过去式后缀
+  const pastSuffixes = ['完了', '过了', '好了', '完', '过']
+
+  // 智能判断一句话是"创建提醒"还是"完成事程"
+  const detectAgendaIntent = (text: string): 'create' | 'complete' | 'none' => {
+    const s = text.trim()
+    if (s.length === 0) return 'none'
+
+    // 1. 明显提醒词 → 创建
+    if (reminderKeywords.some(kw => s.includes(kw))) return 'create'
+
+    // 2. "明天"/"下周"等明确未来时间 → 创建
+    if (s.includes('明天') || s.includes('下周') || s.includes('下次') || s.includes('以后')) return 'create'
+
+    // 3. 明确完成时 → 完成
+    const completedPatterns = [
+      /刚[做吃吃喝喝完]完/,    // 刚做完、刚吃完
+      /已经[做吃吃喝喝]完?了?/, // 已经吃完、已经做完了
+      /正在[做吃吃喝喝运动走跑]/, // 正在吃、正在运动
+      /[吃喝][完过]了?/,       // 吃完了、喝过
+    ]
+    if (completedPatterns.some(p => p.test(s))) return 'complete'
+
+    // 4. 句子结尾是"了" 且 没有时间词 → 完成
+    if (s.endsWith('了') && !s.match(/点|分|小时|分钟/)) return 'complete'
+
+    // 5. 有明确时间 + 动作 → 需要判断时间是否已过
+    const timeMatch = s.match(/(\d{1,2})[:：点](\d{2})?分?/)
+    if (timeMatch) {
+      const hour = Number(timeMatch[1])
+      const minute = timeMatch[2] ? Number(timeMatch[2]) : 0
+      const now = new Date()
+      const currentHour = now.getHours()
+      const currentMinute = now.getMinutes()
+
+      // 如果是"下午/晚上 + 小时<12"，加12
+      let finalHour = hour
+      if ((s.includes('下午') || s.includes('晚上')) && hour < 12) finalHour = hour + 12
+
+      const targetMinutes = finalHour * 60 + minute
+      const currentMinutes = currentHour * 60 + currentMinute
+
+      // 时间已过（2小时内算刚做完）→ 完成
+      if (targetMinutes < currentMinutes && currentMinutes - targetMinutes < 180) {
+        return 'complete'
+      }
+      // 时间还没到 → 创建
+      if (targetMinutes > currentMinutes) {
+        return 'create'
+      }
+    }
+
+    // 6. 有"要/得"等计划词 → 创建
+    if (/^要[做吃喝运动去]/.test(s) || /得[做吃喝运动去]/.test(s)) return 'create'
+
+    // 7. 单纯的行为词（如"喝水"、"吃药"、"吃饭"）→ 默认视为完成（陈述事实）
+    //    由调用方决定是否匹配已有事程
+    return 'complete'
+  }
+
+  // 单段事程解析（只解析时间+内容，不判断意图）
+  const parseAgendaSegment = (seg: string): { time: string; content: string; isMustDo: boolean } | null => {
+    const s = seg.trim()
+    if (s.length === 0) return null
+
+    const segIsMustDo = mustDoKeywords.some(kw => s.includes(kw))
+
+    let segTime = ''
+    const hhmmMatch = s.match(/(\d{1,2})[:：](\d{2})/)
+    const pointMatch = s.match(/(\d{1,2})点(?:(\d{1,2})分)?/)
+    const periodMatch = s.match(/(早上|上午|中午|下午|晚上|凌晨)(\d{1,2})?(?:点)?(?:(\d{1,2})分)?/)
+
+    if (hhmmMatch) {
+      segTime = `${String(Number(hhmmMatch[1])).padStart(2, '0')}:${hhmmMatch[2]}`
+    } else if (pointMatch) {
+      const hour = Number(pointMatch[1])
+      const min = pointMatch[2] ? Number(pointMatch[2]) : 0
+      let finalHour = hour
+      if ((s.includes('下午') || s.includes('晚上')) && hour < 12) finalHour = hour + 12
+      if (s.includes('凌晨') && hour === 12) finalHour = 0
+      segTime = `${String(finalHour).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+    } else if (periodMatch) {
+      const period = periodMatch[1]
+      const hour = periodMatch[2] ? Number(periodMatch[2]) : null
+      const min = periodMatch[3] ? Number(periodMatch[3]) : 0
+      if (hour !== null) {
+        let finalHour = hour
+        if ((period === '下午' || period === '晚上') && hour < 12) finalHour = hour + 12
+        if (period === '凌晨' && hour === 12) finalHour = 0
+        segTime = `${String(finalHour).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+      }
+    }
+
+    // 提取事程核心内容
+    let segContent = s
+      .replace(/^(记得|别忘了|提醒我|要记得|一定要|需要|要做|得去|准备)[，, ]?/, '')
+      .replace(/^(正在|刚|刚刚|已经|在)/, '')
+      .replace(/(早上|上午|中午|下午|晚上|凌晨)?\d{1,2}点(?:\d{1,2}分)?[钟]?[，, ]?/, '')
+      .replace(/\d{1,2}[:：]\d{2}[，, ]?/, '')
+      .replace(/[（(]?必做[）)]?/, '')
+      .replace(/[完过了好]$/, '')
+      .trim()
+    segContent = segContent.replace(/^(去|要|做|得)/, '').trim()
+
+    if (segContent.length === 0) return null
+
+    const now = new Date()
+    const defaultTime = segTime || `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    return { time: defaultTime, content: segContent, isMustDo: segIsMustDo }
+  }
+
+  // 判断整句话意图
+  const overallIntent = detectAgendaIntent(t)
+
+  if (overallIntent === 'create') {
+    // 创建事程：尝试拆分多个
+    const segments = t.split(/[，、；。]|还有|然后|再|和/g).map(s => s.trim()).filter(Boolean)
+    if (segments.length > 1) {
+      const agendas: Omit<AgendaItem, 'id' | 'date'>[] = []
+      let inheritCreate = false
+      for (const seg of segments) {
+        const segIntent = inheritCreate || detectAgendaIntent(seg) === 'create'
+        if (segIntent) {
+          const result = parseAgendaSegment(seg)
+          if (result) {
+            agendas.push({
+              ...result,
+              status: 'pending',
+              remainingTime: '今日提醒',
+            })
+            inheritCreate = true
+          }
+        }
+      }
+      if (agendas.length > 1) {
+        sideEffects.agendaList = agendas
+      } else if (agendas.length === 1) {
+        sideEffects.agenda = agendas[0]
+      }
+    } else {
+      const result = parseAgendaSegment(t)
+      if (result) {
+        sideEffects.agenda = {
+          ...result,
+          status: 'pending',
+          remainingTime: '今日提醒',
+        }
+      }
+    }
+  }
+  // complete 意图不在 parseVoiceText 里处理，留给 submitVoiceRecord 去匹配已有事程
+
   // 保证至少有一个类型
   if (tags.length === 0) {
     tags.push('event')
@@ -204,11 +404,20 @@ interface AppState {
   postponeAgenda: (id: string, minutes: number) => void
   deleteAgenda: (id: string) => void
 
+  agendaRecommendations: AgendaRecommendation[]
+  generateAgendaRecommendations: () => void
+  applyRecommendation: (id: string) => void
+  dismissRecommendation: (id: string) => void
+
   // 时间线
   timelineRecords: TimelineRecord[]
   addTimelineRecord: (record: Omit<TimelineRecord, 'id'>) => string
   // 修改某条时间线记录的标签（用户手动调整）
   updateRecordTags: (id: string, tags: string[]) => void
+  // 添加补充记录
+  addNoteToRecord: (id: string, content: string) => void
+  // 删除补充记录
+  deleteNoteFromRecord: (recordId: string, noteId: string) => void
   // 标签偏好记忆：用户修改过的话语关键词 → 偏好标签集合
   tagPreferences: Record<string, string[]>
   setTagPreference: (key: string, tags: string[]) => void
@@ -234,11 +443,33 @@ interface AppState {
   addItem: (item: Omit<ItemRecord, 'id' | 'locationHistory' | 'lastUpdate'> & { locationHistory?: LocationHistory[] }) => void
   updateItemLocation: (name: string, location: string) => void
 
-  // 语音录入：综合处理（一句话 → 多标签识别 → 单条时间线记录 → 按需同步购物/物品）
-  submitVoiceRecord: (text: string) => { timelineId: string; tags: string[]; extractedData: Partial<Record<string, any>> }
+  // 语音录入：综合处理（一句话 → 多标签识别 → 单条时间线记录 → 按需同步购物/物品/事程）
+  submitVoiceRecord: (text: string) => { timelineId: string; tags: string[]; extractedData: Partial<Record<string, any>>; agendaCreated: number; isAgendaCreation: boolean; needsConfirm: boolean }
 
   // 常用事程
   frequentAgendas: typeof mockFrequentAgendas
+
+  // 根据内容关键词推断历史平均时间
+  inferAgendaTimeByContent: (content: string) => string | null
+
+  // 基于常识的默认时间推荐
+  inferAgendaTimeByCommonSense: (content: string) => string | null
+
+  // 根据内容自动识别图标
+  autoDetectIcon: (content: string) => string
+
+  // ===== 待确认事程 =====
+  pendingAgendaConfirm: PendingAgendaItem[]
+  addPendingAgenda: (items: PendingAgendaItem[]) => void
+  confirmPendingAgenda: (ids: string[]) => void
+  rejectPendingAgenda: (ids: string[]) => void
+  clearPendingAgenda: () => void
+  updatePendingAgendaTime: (id: string, time: string) => void
+
+  // ===== 到时提醒 =====
+  activeReminder: AgendaItem | null
+  dismissReminder: () => void
+  checkAgendaReminders: () => AgendaItem | null
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -250,17 +481,22 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // ===== 事程 =====
   agendaItems: mockAgendaItems as AgendaItem[],
-  addAgenda: (agenda) => set((state) => ({
-    agendaItems: [
-      ...state.agendaItems,
-      {
-        ...agenda,
-        id: genId(),
-        status: agenda.status ?? 'pending',
-        remainingTime: agenda.remainingTime ?? '未到时间',
-      },
-    ],
-  })),
+  addAgenda: (agenda) => {
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    set((state) => ({
+      agendaItems: [
+        ...state.agendaItems,
+        {
+          ...agenda,
+          id: genId(),
+          date: agenda.date ?? todayStr,
+          status: agenda.status ?? 'pending',
+          remainingTime: agenda.remainingTime ?? '未到时间',
+        },
+      ],
+    }))
+  },
   updateAgenda: (id, patch) => set((state) => ({
     agendaItems: state.agendaItems.map(a => a.id === id ? { ...a, ...patch } : a),
   })),
@@ -280,12 +516,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     agendaItems: state.agendaItems.filter(a => a.id !== id),
   })),
 
+  // ===== AI智能事程推荐 =====
+  agendaRecommendations: [] as AgendaRecommendation[],
+
   // ===== 时间线 =====
   timelineRecords: mockTimelineRecords as TimelineRecord[],
   addTimelineRecord: (record) => {
     const id = genId()
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const fullRecord = { ...record, id, date: record.date ?? todayStr }
     set((state) => ({
-      timelineRecords: [{ ...record, id }, ...state.timelineRecords],
+      timelineRecords: [fullRecord, ...state.timelineRecords],
     }))
     // 自动维护标签 usageCount
     const st = get()
@@ -318,6 +560,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       ),
     }))
   },
+  addNoteToRecord: (id, content) => {
+    const now = new Date()
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    set((state) => ({
+      timelineRecords: state.timelineRecords.map(r =>
+        r.id === id
+          ? {
+              ...r,
+              notes: [
+                ...r.notes,
+                { id: genId(), content, createdAt: timeStr },
+              ],
+            }
+          : r
+      ),
+    }))
+  },
+  deleteNoteFromRecord: (recordId, noteId) => set((state) => ({
+    timelineRecords: state.timelineRecords.map(r =>
+      r.id === recordId
+        ? { ...r, notes: r.notes.filter(n => n.id !== noteId) }
+        : r
+    ),
+  })),
   // 标签偏好记忆：空对象，用户修改标签时逐步填充
   tagPreferences: {},
   setTagPreference: (key, tags) => set((state) => ({
@@ -454,18 +720,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
   })),
 
-  // ===== 综合语音录入（单条记录 + 多标签 + 偏好查询） =====
+  // ===== 综合语音录入（单条记录 + 多标签 + 偏好查询 + 待确认事程） =====
   submitVoiceRecord: (text) => {
     const t = text.trim()
     const time = nowTime()
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 
     // 1) 智能解析多标签
     const parsed = parseVoiceText(t)
     let tags = parsed.tags
     let extractedData = parsed.extractedData
 
-    // 2) 查询用户标签偏好：用话语的关键特征作为key
-    //    key 提取规则：取话语中命中的核心关键词（物品名/商店名/行为词）
+    // 2) 查询用户标签偏好
     let prefKey: string | undefined
     if (extractedData.item?.itemName) prefKey = `item:${extractedData.item.itemName}`
     else if (extractedData.shopping?.store) prefKey = `shopping:${extractedData.shopping.store}`
@@ -473,18 +740,88 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const state = get()
     if (prefKey && state.tagPreferences[prefKey]) {
-      // 用户之前修改过同类话语的标签 → 应用偏好
       tags = state.tagPreferences[prefKey]
     }
 
-    // 3) 尝试匹配事程（基于行为关键词）
+    // 3) 事程处理：新建 or 匹配完成
     let matchedAgenda: string | undefined
-    if (tags.includes('behavior') && extractedData.behavior?.behavior) {
-      const matched = state.agendaItems.find(a =>
-        a.status === 'pending' && a.content.includes(extractedData.behavior!.behavior)
-      )
-      if (matched) {
-        matchedAgenda = `${matched.time}${matched.content}`
+    let recordStatus: 'matched' | 'unmatched' = 'unmatched'
+    let agendaCreatedCount = 0
+    let isAgendaCreation = false
+    let needsConfirm = false
+
+    const hasAgendaList = parsed.sideEffects?.agendaList && parsed.sideEffects.agendaList.length > 0
+    const hasSingleAgenda = !!parsed.sideEffects?.agenda
+
+    // 判断时间是否是"默认当前时间"（即用户没说具体时间）
+    const defaultTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    const isDefaultTime = (t: string) => t === defaultTimeStr
+
+    // 智能推断时间函数，返回时间和来源
+    const smartTime = (ag: { time: string; content: string }): { time: string; source: PendingAgendaItem['timeSource'] } => {
+      if (!isDefaultTime(ag.time)) return { time: ag.time, source: 'user-specified' }
+      const fromHistory = get().inferAgendaTimeByContent(ag.content)
+      if (fromHistory) return { time: fromHistory, source: 'history' }
+      const fromCommon = get().inferAgendaTimeByCommonSense(ag.content)
+      if (fromCommon) return { time: fromCommon, source: 'common-sense' }
+      return { time: ag.time, source: 'current' }
+    }
+
+    if (hasAgendaList) {
+      // 多事程：加入待确认队列
+      isAgendaCreation = true
+      needsConfirm = true
+      const list = parsed.sideEffects!.agendaList!
+      const pendingList: PendingAgendaItem[] = []
+      for (const ag of list) {
+        const { time: finalTime, source } = smartTime(ag)
+        pendingList.push({
+          id: genId(),
+          content: ag.content,
+          time: finalTime,
+          isMustDo: ag.isMustDo,
+          timeSource: source,
+        })
+        agendaCreatedCount++
+      }
+      get().addPendingAgenda(pendingList)
+      matchedAgenda = `${pendingList[0].time}${pendingList[0].content}${pendingList.length > 1 ? ` 等${pendingList.length}项` : ''}`
+    } else if (hasSingleAgenda) {
+      // 单事程：加入待确认队列
+      isAgendaCreation = true
+      needsConfirm = true
+      const ag = parsed.sideEffects!.agenda!
+      const { time: finalTime, source } = smartTime(ag)
+      const pendingItem: PendingAgendaItem = {
+        id: genId(),
+        content: ag.content,
+        time: finalTime,
+        isMustDo: ag.isMustDo,
+        timeSource: source,
+      }
+      get().addPendingAgenda([pendingItem])
+      agendaCreatedCount = 1
+      matchedAgenda = `${finalTime}${ag.content}`
+    } else {
+      // 没有识别出新建事程 → 尝试匹配已有事程（表示完成了）
+      let matchKeyword = ''
+      if (extractedData.behavior?.behavior) {
+        matchKeyword = extractedData.behavior.behavior
+      } else if (extractedData.event?.event) {
+        const eventText = extractedData.event.event as string
+        const actionMatch = eventText.match(/(吃|喝|运动|散步|跑步|拿|取|买|去|回)[\u4e00-\u9fa5]{0,3}/)
+        if (actionMatch) matchKeyword = actionMatch[0]
+      }
+
+      if (matchKeyword) {
+        const matched = get().agendaItems.find(a =>
+          a.date === todayStr && a.status === 'pending' && a.content.includes(matchKeyword)
+        )
+        if (matched) {
+          matchedAgenda = `${matched.time}${matched.content}`
+          recordStatus = 'matched'
+          get().completeAgenda(matched.id)
+        }
       }
     }
 
@@ -493,7 +830,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       time,
       content: t,
       matchedAgenda,
-      status: matchedAgenda ? 'matched' : 'unmatched',
+      status: recordStatus,
       tags,
       extractedData,
     })
@@ -507,9 +844,202 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().updateItemLocation(parsed.sideEffects.itemUpdate.name, parsed.sideEffects.itemUpdate.location)
     }
 
-    return { timelineId, tags, extractedData }
+    return { timelineId, tags, extractedData, agendaCreated: agendaCreatedCount, isAgendaCreation, needsConfirm }
   },
 
   // ===== 常用事程 =====
   frequentAgendas: mockFrequentAgendas,
+
+  // ===== 辅助：根据内容关键词推断历史平均时间 =====
+  inferAgendaTimeByContent: (content: string): string | null => {
+    const st = get()
+    const records = st.timelineRecords.filter(r => r.tags.includes('behavior'))
+    if (records.length === 0) return null
+
+    let keyword = ''
+    const behaviorMatch = content.match(/(吃药|吃饭|早饭|午饭|晚饭|运动|散步|喝水|睡觉|起床|洗漱)/)
+    if (behaviorMatch) {
+      keyword = behaviorMatch[1]
+    } else {
+      keyword = content.slice(0, 2)
+    }
+
+    const matchedRecords = records.filter(r => r.content.includes(keyword))
+    if (matchedRecords.length === 0) return null
+
+    let totalMinutes = 0
+    for (const r of matchedRecords) {
+      const [h, m] = r.time.split(':').map(Number)
+      totalMinutes += h * 60 + m
+    }
+    const avgMinutes = Math.round(totalMinutes / matchedRecords.length)
+    const avgHour = Math.floor(avgMinutes / 60)
+    const avgMin = avgMinutes % 60
+    return `${String(avgHour).padStart(2, '0')}:${String(avgMin).padStart(2, '0')}`
+  },
+
+  // ===== 辅助：基于常识的默认时间推荐 =====
+  inferAgendaTimeByCommonSense: (content: string): string | null => {
+    const s = content
+    // 早餐相关
+    if (/早饭|早餐/.test(s)) return '07:30'
+    // 午餐相关
+    if (/午饭|午餐|吃中饭/.test(s)) return '12:00'
+    // 晚餐相关
+    if (/晚饭|晚餐|吃晚饭/.test(s)) return '18:00'
+    // 吃药（默认饭后）
+    if (/吃药/.test(s)) return '08:00'
+    // 起床
+    if (/起床/.test(s)) return '07:00'
+    // 睡觉/休息
+    if (/睡觉|休息/.test(s)) return '22:00'
+    // 运动/散步（默认傍晚）
+    if (/运动|散步|跑步|锻炼/.test(s)) return '18:30'
+    // 喝水（当前时间往后推1小时）
+    if (/喝水/.test(s)) {
+      const now = new Date()
+      const h = Math.min(23, now.getHours() + 1)
+      return `${String(h).padStart(2, '0')}:00`
+    }
+    // 洗漱
+    if (/洗漱|洗脸|刷牙/.test(s)) return '07:15'
+    return null
+  },
+
+  // ===== 根据内容自动识别图标 =====
+  autoDetectIcon: (content: string): string => {
+    const s = content
+    if (/药/.test(s)) return '💊'
+    if (/饭|餐|食/.test(s)) return '🍚'
+    if (/水|喝/.test(s)) return '💧'
+    if (/运动|散步|跑步|锻炼|走/.test(s)) return '🏃'
+    if (/睡|休息|午休/.test(s)) return '🛏'
+    if (/读|看|学|书/.test(s)) return '📖'
+    if (/买|购|超市/.test(s)) return '🛒'
+    if (/洗|清洁|打扫/.test(s)) return '🧹'
+    if (/车|出行|出发|出差|飞/.test(s)) return '✈️'
+    if (/会|开|办公|工作/.test(s)) return '📋'
+    return '📋'
+  },
+
+  // ===== AI智能事程推荐 =====
+  generateAgendaRecommendations: () => {
+    const st = get()
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+
+    const todayAgendas = st.agendaItems.filter(a => a.date === todayStr)
+    const todayContents = todayAgendas.map(a => a.content)
+    const addedContents = new Set<string>()
+    const newAgendas: AgendaItem[] = []
+
+    // 1. 从历史记录中提取高频行为
+    const behaviorRecords = st.timelineRecords.filter(r => r.tags.includes('behavior'))
+    const behaviorCounts: Record<string, { count: number; times: number[] }> = {}
+
+    for (const record of behaviorRecords) {
+      const content = record.content
+      const keywordMatch = content.match(/(吃药|吃饭|早饭|午饭|晚饭|运动|散步|跑步|喝水|睡觉|起床|洗漱|阅读|锻炼)/)
+      let keyword = keywordMatch ? keywordMatch[1] : content.slice(0, 2)
+      
+      if (!behaviorCounts[keyword]) {
+        behaviorCounts[keyword] = { count: 0, times: [] }
+      }
+      behaviorCounts[keyword].count++
+      
+      const [h, m] = record.time.split(':').map(Number)
+      behaviorCounts[keyword].times.push(h * 60 + m)
+    }
+
+    // 筛选频率 >= 3次的行为
+    const highFreqBehaviors = Object.entries(behaviorCounts)
+      .filter(([, data]) => data.count >= 3)
+      .sort((a, b) => b[1].count - a[1].count)
+
+    for (const [keyword, data] of highFreqBehaviors) {
+      if (todayContents.some(c => c.includes(keyword)) || addedContents.has(keyword)) continue
+      
+      const avgMinutes = Math.round(data.times.reduce((a, b) => a + b, 0) / data.times.length)
+      const avgHour = Math.floor(avgMinutes / 60)
+      const avgMin = avgMinutes % 60
+      const time = `${String(avgHour).padStart(2, '0')}:${String(avgMin).padStart(2, '0')}`
+
+      newAgendas.push({
+        id: genId(),
+        date: todayStr,
+        time,
+        content: keyword,
+        isMustDo: keyword.includes('药'),
+        status: 'pending',
+        remainingTime: '今日提醒',
+        icon: st.autoDetectIcon(keyword),
+        category: keyword.includes('药') ? '必做' : keyword.includes('饭') ? '重要' : '普通',
+        isHighFrequency: true,
+      })
+      addedContents.add(keyword)
+    }
+
+    if (newAgendas.length > 0) {
+      set((state) => ({
+        agendaItems: [...state.agendaItems, ...newAgendas.slice(0, 5)],
+      }))
+    }
+  },
+
+  // ===== 待确认事程 =====
+  pendingAgendaConfirm: [],
+  addPendingAgenda: (items) => set((state) => ({
+    pendingAgendaConfirm: [...state.pendingAgendaConfirm, ...items],
+  })),
+  confirmPendingAgenda: (ids) => {
+    const st = get()
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const toConfirm = st.pendingAgendaConfirm.filter(p => ids.includes(p.id))
+    for (const item of toConfirm) {
+      st.addAgenda({
+        content: item.content,
+        time: item.time,
+        isMustDo: item.isMustDo,
+        date: todayStr,
+        status: 'pending',
+        remainingTime: '今日提醒',
+      })
+    }
+    set((state) => ({
+      pendingAgendaConfirm: state.pendingAgendaConfirm.filter(p => !ids.includes(p.id)),
+    }))
+  },
+  rejectPendingAgenda: (ids) => set((state) => ({
+    pendingAgendaConfirm: state.pendingAgendaConfirm.filter(p => !ids.includes(p.id)),
+  })),
+  clearPendingAgenda: () => set({ pendingAgendaConfirm: [] }),
+  updatePendingAgendaTime: (id, time) => set((state) => ({
+    pendingAgendaConfirm: state.pendingAgendaConfirm.map(p =>
+      p.id === id ? { ...p, time, timeSource: 'user-specified' } : p
+    ),
+  })),
+
+  // ===== 到时提醒 =====
+  activeReminder: null,
+  dismissReminder: () => set({ activeReminder: null }),
+  checkAgendaReminders: () => {
+    const st = get()
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+
+    // 找到当前时间到点的待办事程
+    const due = st.agendaItems.find(a =>
+      a.date === todayStr &&
+      a.status === 'pending' &&
+      a.time === currentTime
+    )
+
+    if (due && !st.activeReminder) {
+      set({ activeReminder: due })
+      return due
+    }
+    return null
+  },
 }))
