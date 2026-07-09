@@ -41,4 +41,5 @@ class RouteNames {
   static const String chatHistory = '/chat-history';
   static const String aiSettings = '/ai-settings';
   static const String tagManagement = '/tag-management';
+  static const String intentTraining = '/intent-training';
 }

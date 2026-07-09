@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/models/app_models.dart';
+import '../../../../core/mock/mock_data.dart';
 import '../../../../core/state/app_store.dart';
 import '../../../../shared/widgets/timeline_item.dart';
 import '../../../../shared/widgets/agenda_item.dart';
 import '../../../../shared/widgets/swipe_delete_wrapper.dart';
+import '../../../../shared/widgets/agenda_confirm_dialog.dart';
 
 /// 首页 - 对齐 HomePage.tsx
 /// 时间线/事程双 Tab + 日历弹窗 + 问候语 + 到时提醒
@@ -534,6 +536,13 @@ class _HomePageState extends State<HomePage> {
             ? AppColors.info
             : AppColors.textTertiary;
 
+    final isToday = item.suggestedDate == MockData.todayStr;
+    final dateLabel = isToday
+        ? '今天'
+        : item.suggestedDate == MockData.dateOffset(1)
+            ? '明天'
+            : item.suggestedDate;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
@@ -567,8 +576,15 @@ class _HomePageState extends State<HomePage> {
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Text(item.suggestedTime,
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(item.suggestedTime,
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                        Text(dateLabel,
+                            style: TextStyle(fontSize: 10, color: isToday ? AppColors.accent : AppColors.textSecondary)),
+                      ],
+                    ),
                   ),
                   GestureDetector(
                     onTap: () {
@@ -620,7 +636,7 @@ class _HomePageState extends State<HomePage> {
                 onTap: () {
                   store.confirmPendingAgenda([item.id]);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('已添加到今日事程'), duration: Duration(seconds: 1)),
+                    SnackBar(content: Text(isToday ? '已添加到今日事程' : '已添加到$dateLabel事程'), duration: const Duration(seconds: 1)),
                   );
                 },
                 child: Container(
@@ -1950,14 +1966,30 @@ class _CreateAgendaModalState extends State<CreateAgendaModal> {
     }
   }
 
-  void _stopRecording() {
+  void _stopRecording() async {
     if (!_isRecording) return;
     setState(() => _isRecording = false);
     const voiceText = '记得下午3点吃药';
     setState(() => _voiceText = voiceText);
-    // 直接创建事程，不待确认
+    // 使用AI意图识别
     final store = context.read<AppStore>();
-    store.submitVoiceRecordDirect(voiceText);
+    final result = await store.submitVoiceRecordWithAI(voiceText);
+    final pendingAgendas = store.pendingAgendaConfirm;
+    final intentResult = result['_intentResult'];
+
+    if (!mounted) return;
+
+    // 如果有待确认事程，弹出智能确认弹窗（模拟语音也走完整流程）
+    if (pendingAgendas.isNotEmpty && intentResult != null) {
+      await showSmartAgendaConfirmDialog(
+        context: context,
+        originalText: voiceText,
+        intentResult: intentResult,
+        pendingAgendas: pendingAgendas,
+        countdownSeconds: 4,
+      );
+    }
+
     // 2秒后自动关闭
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) _close();

@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../layouts/secondary_layout.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_icons.dart';
 import '../../../../core/state/app_store.dart';
 import '../../../../core/models/app_models.dart';
 
@@ -17,14 +19,18 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
   bool _reminderExpanded = false;
   bool _strategyExpanded = false;
   final TextEditingController _contentController = TextEditingController();
-  final TextEditingController _timeController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
+  Timer? _timer;
+  String _currentTime = '';
+  String _currentDate = '';
+  String _remainingTime = '';
+  AgendaLevel _currentLevel = AgendaLevel.normal;
 
   @override
   void dispose() {
     _contentController.dispose();
-    _timeController.dispose();
     _noteController.dispose();
+    _timer?.cancel();
     super.dispose();
   }
 
@@ -32,12 +38,55 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
     if (_contentController.text != agenda.content) {
       _contentController.text = agenda.content;
     }
-    if (_timeController.text != agenda.time) {
-      _timeController.text = agenda.time;
+    if (_currentTime != agenda.time) {
+      _currentTime = agenda.time;
+    }
+    if (_currentDate != agenda.date) {
+      _currentDate = agenda.date;
     }
     if (_noteController.text != (agenda.note ?? '')) {
       _noteController.text = agenda.note ?? '';
     }
+    if (_currentLevel != agenda.level) {
+      _currentLevel = agenda.level;
+    }
+    _updateRemainingTime();
+  }
+
+  void _updateRemainingTime() {
+    setState(() {
+      _remainingTime = _calculateRemainingTime();
+    });
+  }
+
+  String _calculateRemainingTime() {
+    if (_currentDate != _todayStr()) {
+      return '待提醒';
+    }
+    final parts = _currentTime.split(':');
+    if (parts.length != 2) return '今日提醒';
+    final h = int.tryParse(parts[0]) ?? 0;
+    final m = int.tryParse(parts[1]) ?? 0;
+    final now = DateTime.now();
+    final agendaTime = DateTime(now.year, now.month, now.day, h, m);
+    final diff = agendaTime.difference(now);
+    if (diff.isNegative) {
+      return '已过期';
+    }
+    final hours = diff.inHours;
+    final minutes = diff.inMinutes % 60;
+    if (hours > 0) {
+      return '还有${hours}小时${minutes}分';
+    }
+    if (minutes > 0) {
+      return '还有${minutes}分钟';
+    }
+    return '即将开始';
+  }
+
+  String _todayStr() {
+    final n = DateTime.now();
+    return '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -120,14 +169,22 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                     ),
                     const SizedBox(height: 4),
-                    TextField(
-                      controller: _timeController,
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        hintText: '计划时间',
-                        contentPadding: EdgeInsets.zero,
+                    GestureDetector(
+                      onTap: _showTimePicker,
+                      child: Row(
+                        children: [
+                          const Icon(AppIcons.clock, size: 14, color: AppColors.textTertiary),
+                          const SizedBox(width: 4),
+                          Text(
+                            _currentTime.isNotEmpty ? _currentTime : '选择时间',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: _currentTime.isNotEmpty ? AppColors.textSecondary : AppColors.textTertiary,
+                            ),
+                          ),
+                          const Icon(AppIcons.chevronDown, size: 12, color: AppColors.textTertiary),
+                        ],
                       ),
-                      style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                     ),
                   ],
                 ),
@@ -140,12 +197,12 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
             runSpacing: 6,
             children: [
               _buildStatusBadge(agenda.status),
-              if (agenda.isMustDo)
-                _buildBadge('必做', AppColors.danger, AppColors.dangerLight),
+              _buildLevelSelector(),
+              _buildCategoryBadge(agenda.category),
               if (agenda.isHighFrequency)
-                _buildBadge('高频', AppColors.info, AppColors.infoLight),
+                _buildBadge('高频', AppColors.purple, AppColors.purpleLight),
               if (agenda.source == AgendaSource.ai)
-                _buildBadge('AI推荐', AppColors.purple, AppColors.purpleLight),
+                _buildBadge('AI推荐', AppColors.accent, AppColors.accentLight),
             ],
           ),
         ],
@@ -162,9 +219,9 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
       ),
       child: Column(
         children: [
-          _infoTile('日期', agenda.date),
+          _datePickerTile(),
           const Divider(height: 1, color: AppColors.border),
-          _infoTile('剩余时间', agenda.remainingTime ?? '已过期'),
+          _infoTile('剩余时间', _remainingTime),
           const Divider(height: 1, color: AppColors.border),
           _infoTile('重复', agenda.repeat.isEmpty ? '不重复' : agenda.repeat.join('、')),
           const Divider(height: 1, color: AppColors.border),
@@ -190,6 +247,181 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _datePickerTile() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text('日期', style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          Expanded(
+            child: GestureDetector(
+              onTap: _showDatePicker,
+              child: Row(
+                children: [
+                  const Icon(AppIcons.calendar, size: 14, color: AppColors.textTertiary),
+                  const SizedBox(width: 4),
+                  Text(
+                    _currentDate.isNotEmpty ? _currentDate : '选择日期',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: _currentDate.isNotEmpty ? AppColors.textPrimary : AppColors.textTertiary,
+                    ),
+                  ),
+                  const Spacer(),
+                  const Icon(AppIcons.chevronDown, size: 14, color: AppColors.textTertiary),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showTimePicker() async {
+    final timeParts = _currentTime.split(':');
+    final initialTime = TimeOfDay(
+      hour: timeParts.length >= 1 ? int.tryParse(timeParts[0]) ?? 12 : 12,
+      minute: timeParts.length >= 2 ? int.tryParse(timeParts[1]) ?? 0 : 0,
+    );
+    final selectedTime = await showTimePicker(
+      context: context,
+      initialTime: initialTime,
+    );
+    if (selectedTime != null) {
+      setState(() {
+        _currentTime = '${selectedTime.hour.toString().padLeft(2, '0')}:${selectedTime.minute.toString().padLeft(2, '0')}';
+        _updateRemainingTime();
+      });
+    }
+  }
+
+  void _showDatePicker() async {
+    final dateParts = _currentDate.split('-');
+    final initialDate = DateTime(
+      dateParts.length >= 1 ? int.tryParse(dateParts[0]) ?? DateTime.now().year : DateTime.now().year,
+      dateParts.length >= 2 ? int.tryParse(dateParts[1]) ?? DateTime.now().month : DateTime.now().month,
+      dateParts.length >= 3 ? int.tryParse(dateParts[2]) ?? DateTime.now().day : DateTime.now().day,
+    );
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (selectedDate != null) {
+      setState(() {
+        _currentDate = '${selectedDate.year}-${selectedDate.month.toString().padLeft(2, '0')}-${selectedDate.day.toString().padLeft(2, '0')}';
+        _updateRemainingTime();
+      });
+    }
+  }
+
+  void _showPostponeDialog(AgendaItem agenda) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              '选择推迟时间',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            GridView.count(
+              shrinkWrap: true,
+              crossAxisCount: 3,
+              childAspectRatio: 2.5,
+              padding: EdgeInsets.zero,
+              children: [
+                _postponeOption('5分钟', 5, agenda),
+                _postponeOption('10分钟', 10, agenda),
+                _postponeOption('15分钟', 15, agenda),
+                _postponeOption('30分钟', 30, agenda),
+                _postponeOption('1小时', 60, agenda),
+                _postponeOption('自定义', -1, agenda),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('取消', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _postponeOption(String label, int minutes, AgendaItem agenda) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.pop(context);
+        if (minutes == -1) {
+          _showCustomPostpone(agenda);
+        } else {
+          context.read<AppStore>().postponeAgenda(agenda.id, minutes);
+          Navigator.pop(context);
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.all(6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.bgTertiary,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Center(
+          child: Text(label, style: const TextStyle(fontSize: 13)),
+        ),
+      ),
+    );
+  }
+
+  void _showCustomPostpone(AgendaItem agenda) {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('自定义推迟时间'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(hintText: '请输入推迟分钟数'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              final minutes = int.tryParse(controller.text.trim()) ?? 0;
+              if (minutes > 0) {
+                context.read<AppStore>().postponeAgenda(agenda.id, minutes);
+                Navigator.pop(ctx);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('确定'),
           ),
         ],
       ),
@@ -380,6 +612,55 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
     );
   }
 
+  Widget _buildLevelSelector() {
+    final levels = [
+      {'value': AgendaLevel.normal, 'label': '普通', 'color': AppColors.info, 'bg': AppColors.infoLight},
+      {'value': AgendaLevel.important, 'label': '重要', 'color': AppColors.warning, 'bg': AppColors.warningLight},
+      {'value': AgendaLevel.mustDo, 'label': '必做', 'color': AppColors.danger, 'bg': AppColors.dangerLight},
+    ];
+    return Row(
+      children: levels.map((lv) {
+        final selected = _currentLevel == lv['value'] as AgendaLevel;
+        return GestureDetector(
+          onTap: () => setState(() {
+            _currentLevel = lv['value'] as AgendaLevel;
+          }),
+          child: Container(
+            margin: const EdgeInsets.only(right: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: selected ? (lv['bg'] as Color) : AppColors.bgTertiary,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: selected ? (lv['color'] as Color) : AppColors.border,
+                width: selected ? 2 : 1,
+              ),
+            ),
+            child: Text(
+              lv['label'] as String,
+              style: TextStyle(
+                fontSize: 12,
+                color: selected ? (lv['color'] as Color) : AppColors.textSecondary,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildCategoryBadge(AgendaCategory category) {
+    final config = {
+      AgendaCategory.dailyMustDo: ('每日必做', AppColors.danger, AppColors.dangerLight),
+      AgendaCategory.frequent: ('常用', AppColors.purple, AppColors.purpleLight),
+      AgendaCategory.temporary: ('临时', AppColors.info, AppColors.infoLight),
+      AgendaCategory.custom: ('自定义', AppColors.textSecondary, AppColors.bgTertiary),
+    };
+    final c = config[category]!;
+    return _buildBadge(c.$1, c.$2, c.$3);
+  }
+
   Widget _buildBottomActions(AgendaItem agenda) {
     final isPending = agenda.status == AgendaStatus.pending;
     return Container(
@@ -393,16 +674,13 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
           if (isPending) ...[
             Expanded(
               child: OutlinedButton(
-                onPressed: () {
-                  context.read<AppStore>().postponeAgenda(agenda.id, 10);
-                  Navigator.pop(context);
-                },
+                onPressed: () => _showPostponeDialog(agenda),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   side: const BorderSide(color: AppColors.border),
                 ),
-                child: const Text('推迟10分钟', style: TextStyle(fontSize: 13, color: AppColors.textPrimary)),
+                child: const Text('推迟', style: TextStyle(fontSize: 13, color: AppColors.textPrimary)),
               ),
             ),
             const SizedBox(width: 8),
@@ -469,7 +747,6 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
 
   void _saveChanges(AgendaItem agenda) {
     final content = _contentController.text.trim();
-    final time = _timeController.text.trim();
     final note = _noteController.text.trim();
     if (content.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -482,12 +759,12 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
       AgendaItem(
         id: agenda.id,
         content: content,
-        time: time,
-        date: agenda.date,
+        time: _currentTime,
+        date: _currentDate,
         icon: agenda.icon,
         note: note.isEmpty ? null : note,
-        isMustDo: agenda.isMustDo,
-        level: agenda.level,
+        isMustDo: _currentLevel == AgendaLevel.mustDo,
+        level: _currentLevel,
         status: agenda.status,
         source: agenda.source,
         repeat: agenda.repeat,

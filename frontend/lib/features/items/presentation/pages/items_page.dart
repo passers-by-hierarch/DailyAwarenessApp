@@ -134,24 +134,38 @@ class _ItemsPageState extends State<ItemsPage> {
     if (items.isEmpty) {
       return const Center(child: Text('暂无物品', style: TextStyle(color: AppColors.textSecondary, fontSize: 14)));
     }
-    return GridView.builder(
+    return ListView(
       padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        childAspectRatio: 0.95,
-      ),
-      itemCount: items.length,
-      itemBuilder: (context, idx) => _buildItemCard(context, items[idx]),
+      children: [
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: items.map((item) => SizedBox(
+            width: (MediaQuery.of(context).size.width - 48) / 2,
+            child: _buildItemCard(context, item),
+          )).toList(),
+        ),
+      ],
     );
   }
 
+  String? _getHighFreqLocation(ItemRecord item) {
+    if (item.history.length < 2) return null;
+    final Map<String, int> counts = {};
+    for (final h in item.history) {
+      counts[h.location] = (counts[h.location] ?? 0) + 1;
+    }
+    final sorted = counts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    return sorted.first.key;
+  }
+
   Widget _buildItemCard(BuildContext context, ItemRecord item) {
+    final highFreqLoc = _getHighFreqLocation(item);
+    final latestLoc = item.location;
     return GestureDetector(
-      onTap: () => Navigator.pushNamed(context, '/item-detail', arguments: item.id),
+      onTap: () => Navigator.pushNamed(context, '/items-detail', arguments: item.id),
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: AppColors.bgSecondary,
           borderRadius: BorderRadius.circular(14),
@@ -159,54 +173,91 @@ class _ItemsPageState extends State<ItemsPage> {
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Row(
               children: [
                 Container(
-                  width: 40,
-                  height: 40,
+                  width: 36,
+                  height: 36,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: AppColors.infoLight,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Text(item.icon, style: const TextStyle(fontSize: 20)),
+                  child: Text(item.icon, style: const TextStyle(fontSize: 18)),
                 ),
                 const Spacer(),
                 const Icon(Icons.chevron_right, size: 16, color: AppColors.textTertiary),
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Text(item.name,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                const Icon(Icons.location_on_outlined, size: 12, color: AppColors.textSecondary),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(item.location,
-                      style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                ),
-              ],
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.bgTertiary,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.access_time, size: 12, color: AppColors.info),
+                      const SizedBox(width: 5),
+                      const Text('最新',
+                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(latestLoc,
+                            style: const TextStyle(fontSize: 12, color: AppColors.textPrimary, fontWeight: FontWeight.w600),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Icon(Icons.star, size: 12, color: highFreqLoc != null ? AppColors.accent : AppColors.textTertiary),
+                      const SizedBox(width: 5),
+                      Text('高频',
+                          style: TextStyle(fontSize: 11, color: highFreqLoc != null ? AppColors.textSecondary : AppColors.textTertiary, fontWeight: FontWeight.w500)),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(highFreqLoc ?? '暂无',
+                            style: TextStyle(fontSize: 12, color: highFreqLoc != null ? AppColors.accent : AppColors.textTertiary, fontWeight: FontWeight.w500),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 8),
             Wrap(
               spacing: 4,
               runSpacing: 4,
-              children: item.tags.map((t) {
-                final def = context.read<AppStore>().getTagDef(t);
-                final name = def?.name ?? t;
-                final colorSet = def != null
-                    ? (AppColors.tagColors[def.color] ?? AppColors.tagColors['gray']!)
-                    : AppColors.tagColors['gray']!;
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(color: colorSet.bg, borderRadius: BorderRadius.circular(4)),
-                  child: Text(name, style: TextStyle(fontSize: 11, color: colorSet.color, fontWeight: FontWeight.w500)),
-                );
-              }).toList(),
+              children: item.tags.isEmpty
+                  ? [const SizedBox(height: 19)]
+                  : item.tags.map((t) {
+                      final def = context.read<AppStore>().getTagDef(t);
+                      final name = def?.name ?? t;
+                      final colorSet = def != null
+                          ? (AppColors.tagColors[def.color] ?? AppColors.tagColors['gray']!)
+                          : AppColors.tagColors['gray']!;
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(color: colorSet.bg, borderRadius: BorderRadius.circular(4)),
+                        child: Text(name, style: TextStyle(fontSize: 11, color: colorSet.color, fontWeight: FontWeight.w500)),
+                      );
+                    }).toList(),
             ),
           ],
         ),
@@ -250,7 +301,15 @@ class _ItemsPageState extends State<ItemsPage> {
                 ),
               ),
               const SizedBox(width: 8),
-              Text(r.timeStr, style: const TextStyle(fontSize: 12, color: AppColors.textTertiary)),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('${r.time.month}/${r.time.day}',
+                      style: const TextStyle(fontSize: 12, color: AppColors.textTertiary)),
+                  Text(r.timeStr,
+                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
+                ],
+              ),
             ],
           ),
         );

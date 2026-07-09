@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/app_icons.dart';
 
 /// 二级页面布局 - 对齐 SecondaryLayout.tsx
 /// 顶部固定返回栏 + 标题 + 右侧操作，无底部导航
@@ -42,7 +43,7 @@ class SecondaryLayout extends StatelessWidget implements PreferredSizeWidget {
                       child: const SizedBox(
                         width: 44,
                         height: 48,
-                        child: Icon(Icons.chevron_left, color: AppColors.textPrimary, size: 24),
+                        child: const Icon(AppIcons.chevronLeft, color: AppColors.textPrimary, size: 24),
                       ),
                     )
                   else
@@ -120,7 +121,7 @@ class SecondaryScaffold extends StatelessWidget {
                       child: const SizedBox(
                         width: 44,
                         height: 48,
-                        child: Icon(Icons.chevron_left, color: AppColors.textPrimary, size: 24),
+                        child: const Icon(AppIcons.chevronLeft, color: AppColors.textPrimary, size: 24),
                       ),
                     )
                   else

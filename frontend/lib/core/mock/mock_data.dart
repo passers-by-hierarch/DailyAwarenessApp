@@ -35,7 +35,6 @@ class MockData {
       time: _dt(todayStr, '14:30'),
       type: TimelineType.behavior,
       tags: ['behavior'],
-      matchedAgenda: '15:00吃药',
       notes: [],
     ),
     TimelineRecord(
@@ -101,7 +100,7 @@ class MockData {
       time: _dt(todayStr, '07:30'),
       content: '起床，洗漱',
       type: TimelineType.behavior,
-      tags: ['behavior', 'event', 'custom_sport'],
+      tags: ['behavior', 'event'],
     ),
     TimelineRecord(
       id: '8',
@@ -163,6 +162,96 @@ class MockData {
             ShoppingItem(id: 'i4', name: '猪肉', quantity: 500, unit: '克'),
           ],
         ),
+      ),
+    ),
+    TimelineRecord(
+      id: '15',
+      time: _dt(yesterdayStr, '18:00'),
+      content: '钥匙放在门口鞋柜上',
+      type: TimelineType.item,
+      tags: ['item'],
+      sideEffects: SideEffects(
+        itemUpdate: ItemUpdate(name: '钥匙', location: '门口鞋柜'),
+      ),
+    ),
+    TimelineRecord(
+      id: '16',
+      time: _dt(yesterdayStr, '08:00'),
+      content: '钥匙放在客厅茶几上',
+      type: TimelineType.item,
+      tags: ['item'],
+      sideEffects: SideEffects(
+        itemUpdate: ItemUpdate(name: '钥匙', location: '客厅茶几'),
+      ),
+    ),
+    TimelineRecord(
+      id: '17',
+      time: _dt(twoDaysAgoStr, '20:00'),
+      content: '钥匙放在门口鞋柜上',
+      type: TimelineType.item,
+      tags: ['item'],
+      sideEffects: SideEffects(
+        itemUpdate: ItemUpdate(name: '钥匙', location: '门口鞋柜'),
+      ),
+    ),
+    TimelineRecord(
+      id: '18',
+      time: _dt(twoDaysAgoStr, '09:00'),
+      content: '钥匙放在卧室床头柜上',
+      type: TimelineType.item,
+      tags: ['item'],
+      sideEffects: SideEffects(
+        itemUpdate: ItemUpdate(name: '钥匙', location: '卧室床头柜'),
+      ),
+    ),
+    TimelineRecord(
+      id: '19',
+      time: _dt(threeDaysAgoStr, '19:00'),
+      content: '钥匙放在门口鞋柜上',
+      type: TimelineType.item,
+      tags: ['item'],
+      sideEffects: SideEffects(
+        itemUpdate: ItemUpdate(name: '钥匙', location: '门口鞋柜'),
+      ),
+    ),
+    TimelineRecord(
+      id: '20',
+      time: _dt(yesterdayStr, '15:00'),
+      content: '护照放在衣柜二层抽屉里',
+      type: TimelineType.item,
+      tags: ['item'],
+      sideEffects: SideEffects(
+        itemUpdate: ItemUpdate(name: '护照', location: '衣柜二层'),
+      ),
+    ),
+    TimelineRecord(
+      id: '21',
+      time: _dt(twoDaysAgoStr, '10:00'),
+      content: '护照放在书房书架上',
+      type: TimelineType.item,
+      tags: ['item'],
+      sideEffects: SideEffects(
+        itemUpdate: ItemUpdate(name: '护照', location: '书房书架'),
+      ),
+    ),
+    TimelineRecord(
+      id: '22',
+      time: _dt(threeDaysAgoStr, '14:00'),
+      content: '护照放在衣柜二层抽屉里',
+      type: TimelineType.item,
+      tags: ['item'],
+      sideEffects: SideEffects(
+        itemUpdate: ItemUpdate(name: '护照', location: '衣柜二层'),
+      ),
+    ),
+    TimelineRecord(
+      id: '23',
+      time: _dt(fiveDaysAgoStr, '11:00'),
+      content: '护照放在衣柜二层抽屉里',
+      type: TimelineType.item,
+      tags: ['item'],
+      sideEffects: SideEffects(
+        itemUpdate: ItemUpdate(name: '护照', location: '衣柜二层'),
       ),
     ),
   ];
@@ -278,6 +367,7 @@ class MockData {
         MenuItem(id: '5', title: '提醒规则（全局）', description: '', icon: '🔔', route: '/reminder-rules'),
         MenuItem(id: '6', title: '免打扰时段', description: '22:00-08:00', icon: '🔇', route: '/quiet-hours'),
         MenuItem(id: '7', title: 'AI 智能问答设置', description: '大模型配置', icon: '🤖', route: '/ai-settings'),
+        MenuItem(id: '7a', title: '意图训练管理', description: '管理意图识别模式', icon: '🧠', route: '/intent-training'),
         MenuItem(id: '8', title: '报告导出', description: '', icon: '📄', route: '/report-export'),
         MenuItem(id: '9', title: '健康设备对接', description: '已对接2个设备', icon: '📱', route: '/health-devices'),
       ],

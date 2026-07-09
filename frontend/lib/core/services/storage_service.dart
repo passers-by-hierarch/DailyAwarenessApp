@@ -271,6 +271,40 @@ class StorageService {
       'type': n.type.name,
     }).toList(),
     'deleted': r.deleted,
+    'sideEffects': _sideEffectsToJson(r.sideEffects),
+  };
+
+  Map<String, dynamic>? _sideEffectsToJson(SideEffects? se) {
+    if (se == null) return null;
+    return {
+      'shoppingRecord': se.shoppingRecord != null ? _shoppingRecordToJson(se.shoppingRecord!) : null,
+      'itemUpdate': se.itemUpdate != null ? {
+        'name': se.itemUpdate!.name,
+        'location': se.itemUpdate!.location,
+      } : null,
+      'agenda': se.agenda,
+      'agendaList': se.agendaList,
+      'inventoryUpdate': se.inventoryUpdate != null ? {
+        'name': se.inventoryUpdate!.name,
+        'quantityChange': se.inventoryUpdate!.quantityChange,
+        'unit': se.inventoryUpdate!.unit,
+        'reason': se.inventoryUpdate!.reason,
+      } : null,
+    };
+  }
+
+  Map<String, dynamic> _shoppingRecordToJson(ShoppingRecord r) => {
+    'id': r.id,
+    'store': r.store,
+    'items': r.items.map((i) => {
+      'id': i.id,
+      'name': i.name,
+      'quantity': i.quantity,
+      'unit': i.unit,
+      'price': i.price,
+    }).toList(),
+    'time': r.time.toIso8601String(),
+    'total': r.total,
   };
 
   TimelineRecord _timelineFromJson(Map<String, dynamic> j) => TimelineRecord(
@@ -293,6 +327,40 @@ class StorageService {
       ),
     )).toList() ?? const [],
     deleted: j['deleted'] ?? false,
+    sideEffects: _sideEffectsFromJson(j['sideEffects']),
+  );
+
+  SideEffects? _sideEffectsFromJson(Map<String, dynamic>? j) {
+    if (j == null) return null;
+    return SideEffects(
+      shoppingRecord: j['shoppingRecord'] != null ? _shoppingRecordFromJson(j['shoppingRecord']) : null,
+      itemUpdate: j['itemUpdate'] != null ? ItemUpdate(
+        name: j['itemUpdate']['name'] ?? '',
+        location: j['itemUpdate']['location'] ?? '',
+      ) : null,
+      agenda: j['agenda'],
+      agendaList: j['agendaList'] != null ? List<String>.from(j['agendaList']) : null,
+      inventoryUpdate: j['inventoryUpdate'] != null ? InventoryUpdate(
+        name: j['inventoryUpdate']['name'] ?? '',
+        quantityChange: (j['inventoryUpdate']['quantityChange'] as num?)?.toDouble() ?? 0,
+        unit: j['inventoryUpdate']['unit'] ?? '个',
+        reason: j['inventoryUpdate']['reason'],
+      ) : null,
+    );
+  }
+
+  ShoppingRecord _shoppingRecordFromJson(Map<String, dynamic> j) => ShoppingRecord(
+    id: j['id'] ?? '',
+    store: j['store'] ?? '',
+    items: (j['items'] as List?)?.map((i) => ShoppingItem(
+      id: i['id'] ?? '',
+      name: i['name'] ?? '',
+      quantity: i['quantity'] ?? 1,
+      unit: i['unit'] ?? '个',
+      price: i['price'],
+    )).toList() ?? [],
+    time: j['time'] != null ? DateTime.parse(j['time']) : DateTime.now(),
+    total: j['total'],
   );
 
   Map<String, dynamic> _agendaToJson(AgendaItem a) => {

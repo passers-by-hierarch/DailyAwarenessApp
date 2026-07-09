@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/app_icons.dart';
 import '../../core/state/app_store.dart';
 import '../../shared/widgets/bottom_nav.dart';
+import '../../shared/widgets/agenda_confirm_dialog.dart';
+import '../../shared/widgets/late_off_work_dialog.dart';
 import '../../features/home/presentation/pages/home_page.dart';
 import '../../features/ask/presentation/pages/ask_page.dart';
 import '../../features/habits/presentation/pages/habits_page.dart';
@@ -10,12 +13,30 @@ import '../../features/profile/presentation/pages/profile_page.dart';
 
 /// 主布局 - 对齐 MainLayout.tsx
 /// 包含底部导航栏，首页额外显示记录输入按钮
-class MainLayout extends StatelessWidget {
+class MainLayout extends StatefulWidget {
   const MainLayout({super.key});
+
+  @override
+  State<MainLayout> createState() => _MainLayoutState();
+}
+
+class _MainLayoutState extends State<MainLayout> {
+  bool _lateOffWorkDialogShown = false;
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<AppStore>();
+
+    // 监听晚下班检测结果
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (store.lateOffWorkResult != null && !_lateOffWorkDialogShown) {
+        _lateOffWorkDialogShown = true;
+        showLateOffWorkDialog(context: context, result: store.lateOffWorkResult!).then((_) {
+          _lateOffWorkDialogShown = false;
+        });
+      }
+    });
+
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -46,7 +67,7 @@ class MainLayout extends StatelessWidget {
                 color: AppColors.bgTertiary,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.keyboard, size: 20, color: AppColors.textSecondary),
+              child: const Icon(AppIcons.keyboard, size: 20, color: AppColors.textSecondary),
             ),
           ),
           const SizedBox(width: 8),
@@ -118,13 +139,28 @@ class _HomeVoiceButtonState extends State<_HomeVoiceButton> {
     }
   }
 
-  void _stopRecording() {
+  void _stopRecording() async {
     if (!_isRecording) return;
     setState(() => _isRecording = false);
     // 模拟语音识别结果
     const voiceText = '起床，洗漱';
-    // 直接提交到时间线，同时解析事程
-    context.read<AppStore>().submitVoiceRecordDirect(voiceText);
+    // 使用AI意图识别
+    final result = await context.read<AppStore>().submitVoiceRecordWithAI(voiceText);
+    final pendingAgendas = context.read<AppStore>().pendingAgendaConfirm;
+    final intentResult = result['_intentResult'];
+
+    if (!mounted) return;
+
+    // 如果有待确认事程，弹出智能确认弹窗（即使是模拟语音，也要走完整流程）
+    if (pendingAgendas.isNotEmpty && intentResult != null) {
+      await showSmartAgendaConfirmDialog(
+        context: context,
+        originalText: voiceText,
+        intentResult: intentResult,
+        pendingAgendas: pendingAgendas,
+        countdownSeconds: 4,
+      );
+    }
   }
 
   void _cancelRecording() {
@@ -148,7 +184,7 @@ class _HomeVoiceButtonState extends State<_HomeVoiceButton> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(_isRecording ? Icons.stop : Icons.mic, color: Colors.white, size: 18),
+            Icon(_isRecording ? AppIcons.square : AppIcons.mic, color: Colors.white, size: 18),
             const SizedBox(width: 8),
             Text(
               _isRecording ? '录音中 ${_recordSeconds}s' : '点击说话，记录现在在做什么',
@@ -212,12 +248,27 @@ class _RecordNowDialogState extends State<_RecordNowDialog> {
     super.dispose();
   }
 
-  void _submit() {
+  void _submit() async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
-    // 使用直接创建模式，文字输入中的事程直接添加到当日
-    context.read<AppStore>().submitVoiceRecordDirect(text);
+    // 使用AI意图识别
+    final result = await context.read<AppStore>().submitVoiceRecordWithAI(text);
+    final pendingAgendas = context.read<AppStore>().pendingAgendaConfirm;
+    final intentResult = result['_intentResult'];
+
+    if (!mounted) return;
     Navigator.pop(context);
+
+    // 如果有待确认事程，弹出智能确认弹窗
+    if (pendingAgendas.isNotEmpty && intentResult != null) {
+      await showSmartAgendaConfirmDialog(
+        context: context,
+        originalText: text,
+        intentResult: intentResult,
+        pendingAgendas: pendingAgendas,
+        countdownSeconds: 4,
+      );
+    }
   }
 
   @override
@@ -246,13 +297,13 @@ class _RecordNowDialogState extends State<_RecordNowDialog> {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  const Icon(Icons.edit_note, size: 20, color: AppColors.accent),
+                  const Icon(AppIcons.edit2, size: 20, color: AppColors.accent),
                   const SizedBox(width: 6),
                   const Text('记录现在', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                   const Spacer(),
                   GestureDetector(
                     onTap: () => Navigator.pop(context),
-                    child: const Icon(Icons.close, size: 20, color: AppColors.textTertiary),
+                    child: const Icon(AppIcons.x, size: 20, color: AppColors.textTertiary),
                   ),
                 ],
               ),
@@ -316,10 +367,10 @@ class _RecordNowDialogState extends State<_RecordNowDialog> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: const [
-                          Icon(Icons.send, size: 16),
-                          SizedBox(width: 6),
-                          Text('记录'),
-                        ],
+                            Icon(AppIcons.send, size: 16),
+                            SizedBox(width: 6),
+                            Text('记录'),
+                          ],
                       ),
                     ),
                   ),

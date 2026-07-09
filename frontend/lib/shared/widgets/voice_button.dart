@@ -2,8 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/app_icons.dart';
 import '../../core/services/speech_service.dart';
 import '../../core/state/app_store.dart';
+import 'agenda_confirm_dialog.dart';
 
 /// 语音按钮 - 按住开始录音，松手停止
 /// 三态机：idle / recording / submitted
@@ -126,21 +128,65 @@ class _VoiceButtonState extends State<VoiceButton>
       return;
     }
 
-    final result = context.read<AppStore>().submitVoiceRecord(text);
-
+    // 显示"识别中..."提示
     setState(() {
       _showSubmitted = true;
-      _submittedText = result['needsConfirm'] == true
-          ? '已创建事程，待确认'
-          : '已记录';
+      _submittedText = '识别中...';
     });
 
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() => _showSubmitted = false);
-        widget.onRecordComplete?.call();
-      }
+    // 使用AI意图识别版
+    final result = await context.read<AppStore>().submitVoiceRecordWithAI(text);
+    final pendingAgendas = context.read<AppStore>().pendingAgendaConfirm;
+    final intentResult = result['_intentResult'];
+
+    setState(() {
+      _showSubmitted = false;
     });
+
+    // 如果有待确认事程，弹出智能确认弹窗
+    if (pendingAgendas.isNotEmpty && intentResult != null) {
+      final confirmed = await showSmartAgendaConfirmDialog(
+        context: context,
+        originalText: text,
+        intentResult: intentResult,
+        pendingAgendas: pendingAgendas,
+        countdownSeconds: 4,
+      );
+      if (!mounted) return;
+      if (confirmed > 0) {
+        setState(() {
+          _showSubmitted = true;
+          _submittedText = '✓ 已创建 $confirmed 个事程';
+        });
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) {
+            setState(() => _showSubmitted = false);
+            widget.onRecordComplete?.call();
+          }
+        });
+      } else {
+        setState(() {
+          _showSubmitted = true;
+          _submittedText = '已忽略';
+        });
+        Future.delayed(const Duration(seconds: 1), () {
+          if (mounted) {
+            setState(() => _showSubmitted = false);
+          }
+        });
+      }
+    } else {
+      setState(() {
+        _showSubmitted = true;
+        _submittedText = '已记录';
+      });
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          setState(() => _showSubmitted = false);
+          widget.onRecordComplete?.call();
+        }
+      });
+    }
   }
 
   void _cancelRecording() {
@@ -156,21 +202,51 @@ class _VoiceButtonState extends State<VoiceButton>
     showDialog(
       context: context,
       builder: (ctx) => _ManualInputDialog(
-        onSubmit: (text) {
+        onSubmit: (text) async {
           Navigator.pop(ctx);
-          final result = context.read<AppStore>().submitVoiceRecord(text);
           setState(() {
             _showSubmitted = true;
-            _submittedText = result['needsConfirm'] == true
-                ? '已创建事程，待确认'
-                : '已记录';
+            _submittedText = '识别中...';
           });
-          Future.delayed(const Duration(seconds: 2), () {
-            if (mounted) {
-              setState(() => _showSubmitted = false);
-              widget.onRecordComplete?.call();
+          final result = await context.read<AppStore>().submitVoiceRecordWithAI(text);
+          final pendingAgendas = context.read<AppStore>().pendingAgendaConfirm;
+          final intentResult = result['_intentResult'];
+
+          setState(() => _showSubmitted = false);
+
+          if (pendingAgendas.isNotEmpty && intentResult != null) {
+            final confirmed = await showSmartAgendaConfirmDialog(
+              context: context,
+              originalText: text,
+              intentResult: intentResult,
+              pendingAgendas: pendingAgendas,
+              countdownSeconds: 4,
+            );
+            if (!mounted) return;
+            if (confirmed > 0) {
+              setState(() {
+                _showSubmitted = true;
+                _submittedText = '✓ 已创建 $confirmed 个事程';
+              });
+              Future.delayed(const Duration(seconds: 2), () {
+                if (mounted) {
+                  setState(() => _showSubmitted = false);
+                  widget.onRecordComplete?.call();
+                }
+              });
             }
-          });
+          } else {
+            setState(() {
+              _showSubmitted = true;
+              _submittedText = '已记录';
+            });
+            Future.delayed(const Duration(seconds: 2), () {
+              if (mounted) {
+                setState(() => _showSubmitted = false);
+                widget.onRecordComplete?.call();
+              }
+            });
+          }
         },
       ),
     );
@@ -208,7 +284,7 @@ class _VoiceButtonState extends State<VoiceButton>
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.mic, color: Colors.white, size: 18),
+              const Icon(AppIcons.mic, color: Colors.white, size: 18),
               const SizedBox(width: 8),
               Text(
                 '语音输入',
@@ -251,7 +327,7 @@ class _VoiceButtonState extends State<VoiceButton>
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.fiber_manual_record, color: AppColors.danger, size: 18),
+                      Icon(AppIcons.circleStop, color: AppColors.danger, size: 18),
                       const SizedBox(width: 8),
                       ...List.generate(5, (i) => Container(
                         margin: const EdgeInsets.symmetric(horizontal: 2),
@@ -301,7 +377,7 @@ class _VoiceButtonState extends State<VoiceButton>
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.check_circle, color: AppColors.success, size: 18),
+            const Icon(AppIcons.circleCheck, color: AppColors.success, size: 18),
             const SizedBox(width: 8),
             Text(
               _submittedText,

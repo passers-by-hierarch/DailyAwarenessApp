@@ -6,9 +6,17 @@ import '../../../../core/state/app_store.dart';
 import '../../../../core/mock/mock_data.dart';
 import '../../../../core/models/app_models.dart';
 
-/// 物品详情页 - 对齐原型 ItemDetailPage
-class ItemDetailPage extends StatelessWidget {
+enum StatsRange { sevenDays, thirtyDays, all }
+
+class ItemDetailPage extends StatefulWidget {
   const ItemDetailPage({super.key});
+
+  @override
+  State<ItemDetailPage> createState() => _ItemDetailPageState();
+}
+
+class _ItemDetailPageState extends State<ItemDetailPage> {
+  StatsRange _selectedRange = StatsRange.sevenDays;
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +32,6 @@ class ItemDetailPage extends StatelessWidget {
       );
     }
 
-    // 位置分布统计
     final Map<String, int> locationCounts = {};
     for (final h in item.history) {
       locationCounts[h.location] = (locationCounts[h.location] ?? 0) + 1;
@@ -45,7 +52,7 @@ class ItemDetailPage extends StatelessWidget {
           const SizedBox(height: 12),
           _buildHistoryTimeline(item.history),
           const SizedBox(height: 12),
-          _buildUsageStats(),
+          _buildUsageStats(item),
           const SizedBox(height: 24),
         ],
       ),
@@ -97,6 +104,10 @@ class ItemDetailPage extends StatelessWidget {
 
   Widget _buildLocationPattern(Map<String, int> locationCounts, int total) {
     if (total == 0) total = 1;
+    final sortedEntries = locationCounts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final topLocation = sortedEntries.isNotEmpty ? sortedEntries.first.key : '';
+    
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -106,10 +117,28 @@ class ItemDetailPage extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('位置规律总结', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+          Row(
+            children: [
+              const Text('位置规律总结', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+              const Spacer(),
+              if (topLocation.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.accentLight,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text('高频：$topLocation',
+                      style: const TextStyle(fontSize: 11, color: AppColors.accent, fontWeight: FontWeight.w500)),
+                ),
+            ],
+          ),
           const SizedBox(height: 12),
-          ...locationCounts.entries.map((e) {
+          ...sortedEntries.asMap().entries.map((entry) {
+            final idx = entry.key;
+            final e = entry.value;
             final percent = (e.value / total * 100).round();
+            final isTop = idx == 0;
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Column(
@@ -118,7 +147,15 @@ class ItemDetailPage extends StatelessWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(e.key, style: const TextStyle(fontSize: 13, color: AppColors.textPrimary)),
+                      Row(
+                        children: [
+                          Text(e.key, style: TextStyle(fontSize: 13, color: isTop ? AppColors.accent : AppColors.textPrimary, fontWeight: isTop ? FontWeight.w600 : FontWeight.normal)),
+                          if (isTop) ...[
+                            const SizedBox(width: 6),
+                            const Icon(Icons.star, size: 12, color: AppColors.accent),
+                          ],
+                        ],
+                      ),
                       Text('$percent%', style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
                     ],
                   ),
@@ -129,7 +166,7 @@ class ItemDetailPage extends StatelessWidget {
                       value: e.value / total,
                       minHeight: 6,
                       backgroundColor: AppColors.bgTertiary,
-                      valueColor: const AlwaysStoppedAnimation<Color>(AppColors.info),
+                      valueColor: AlwaysStoppedAnimation<Color>(isTop ? AppColors.accent : AppColors.info),
                     ),
                   ),
                 ],
@@ -210,9 +247,59 @@ class ItemDetailPage extends StatelessWidget {
     );
   }
 
-  Widget _buildUsageStats() {
-    final days = [3, 5, 2, 6, 4, 7, 5];
-    final maxVal = days.reduce((a, b) => a > b ? a : b);
+  Widget _buildUsageStats(ItemRecord item) {
+    final now = DateTime.now();
+    final nowDay = DateTime(now.year, now.month, now.day);
+
+    int getDays() {
+      switch (_selectedRange) {
+        case StatsRange.sevenDays:
+          return 7;
+        case StatsRange.thirtyDays:
+          return 30;
+        case StatsRange.all:
+          if (item.history.isEmpty) return 7;
+          final earliest = item.history.map((h) => h.time).reduce((a, b) => a.isBefore(b) ? a : b);
+          final diff = nowDay.difference(DateTime(earliest.year, earliest.month, earliest.day)).inDays + 1;
+          return diff < 7 ? 7 : diff;
+      }
+    }
+
+    final totalDays = getDays();
+
+    final days = List.generate(totalDays, (i) {
+      final d = nowDay.subtract(Duration(days: totalDays - 1 - i));
+      return d;
+    });
+
+    final counts = days.map((day) {
+      return item.history.where((h) {
+        final ht = DateTime(h.time.year, h.time.month, h.time.day);
+        return ht.year == day.year && ht.month == day.month && ht.day == day.day;
+      }).length;
+    }).toList();
+
+    final maxVal = counts.isEmpty ? 1 : counts.reduce((a, b) => a > b ? a : b);
+    final safeMax = maxVal < 1 ? 1 : maxVal;
+
+    String _formatDate(DateTime d) {
+      return '${d.month}/${d.day}';
+    }
+
+    String _rangeLabel() {
+      switch (_selectedRange) {
+        case StatsRange.sevenDays:
+          return '近7天';
+        case StatsRange.thirtyDays:
+          return '近30天';
+        case StatsRange.all:
+          return '全部';
+      }
+    }
+
+    final shouldShowAllLabels = totalDays <= 15;
+    final step = shouldShowAllLabels ? 1 : (totalDays / 7).ceil();
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -222,33 +309,61 @@ class ItemDetailPage extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('使用统计（近7天）', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+          Row(
+            children: [
+              Text('使用统计（${_rangeLabel()}）', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.bgTertiary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildRangeButton(StatsRange.sevenDays, '7天'),
+                    _buildRangeButton(StatsRange.thirtyDays, '30天'),
+                    _buildRangeButton(StatsRange.all, '全部'),
+                  ],
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 16),
           SizedBox(
             height: 120,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
-              children: days.asMap().entries.map((entry) {
+              children: counts.asMap().entries.map((entry) {
                 final idx = entry.key;
                 final v = entry.value;
-                final dayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+                final day = days[idx];
+                final isToday = day.year == nowDay.year && day.month == nowDay.month && day.day == nowDay.day;
+                final showLabel = shouldShowAllLabels || idx % step == 0 || idx == counts.length - 1;
                 return Expanded(
                   child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    margin: const EdgeInsets.symmetric(horizontal: 1),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        Text('$v', style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                        if (showLabel && v > 0)
+                          Text('$v', style: const TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+                        if (!showLabel || v == 0)
+                          const SizedBox(height: 14),
                         const SizedBox(height: 4),
                         Container(
-                          height: (v / maxVal) * 70,
+                          height: (v / safeMax) * 70,
                           decoration: BoxDecoration(
-                            color: idx == 5 ? AppColors.accent : AppColors.accentLight,
-                            borderRadius: BorderRadius.circular(4),
+                            color: isToday ? AppColors.accent : AppColors.accentLight,
+                            borderRadius: BorderRadius.circular(2),
                           ),
                         ),
                         const SizedBox(height: 6),
-                        Text(dayLabels[idx], style: const TextStyle(fontSize: 11, color: AppColors.textTertiary)),
+                        Text(
+                          showLabel ? _formatDate(day) : '',
+                          style: const TextStyle(fontSize: 10, color: AppColors.textTertiary),
+                        ),
                       ],
                     ),
                   ),
@@ -257,6 +372,32 @@ class ItemDetailPage extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildRangeButton(StatsRange range, String label) {
+    final isSelected = _selectedRange == range;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _selectedRange = range;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.accent : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: isSelected ? Colors.white : AppColors.textSecondary,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/app_icons.dart';
 
 /// 通用左滑删除包装组件 - 标准 iOS 风格
 /// 左滑显示删除按钮，点击删除；右滑或点击其他区域收起
@@ -105,7 +106,7 @@ class _SwipeDeleteWrapperState extends State<SwipeDeleteWrapper>
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.delete, color: Colors.white, size: 20),
+                      const Icon(AppIcons.delete, color: Colors.white, size: 20),
                       const SizedBox(height: 2),
                       Text(
                         widget.confirmText,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/app_icons.dart';
 import '../../core/models/app_models.dart';
 import '../../core/state/app_store.dart';
 
@@ -72,14 +73,13 @@ class TimelineItemWidget extends StatelessWidget {
                     ),
                     if (matchedAgenda != null) ...[
                       const SizedBox(height: 8),
-                      // 匹配标签 - 对齐设计文档：padding 2px 8px，圆角 4px，字号 12px
-                      _buildMatchedChip(matchedAgenda),
+                      _buildAgendaStatusChips(store),
                     ],
                     if (record.notes.isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          const Icon(Icons.note_add, size: 12, color: AppColors.textTertiary),
+                          const Icon(AppIcons.messageSquare, size: 12, color: AppColors.textTertiary),
                           const SizedBox(width: 4),
                           Text(
                             '${record.notes.length}条补充',
@@ -111,7 +111,7 @@ class TimelineItemWidget extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.label_outline, size: 12, color: AppColors.textTertiary),
+            const Icon(AppIcons.tag, size: 12, color: AppColors.textTertiary),
             const SizedBox(width: 2),
             const Text(
               '已删除',
@@ -147,40 +147,72 @@ class TimelineItemWidget extends StatelessWidget {
   }
 
   IconData _getTagIcon(String tagId, String tagName, bool isCustom, String icon) {
-    if (isCustom) return Icons.label_outline;
+    if (isCustom) return AppIcons.tag;
     if (tagName.contains('行为') || tagName.contains('活动')) {
-      return Icons.trending_up;
+      return AppIcons.activity;
     }
     if (tagName.contains('物品') || tagName.contains('位置')) {
-      return Icons.inventory_2_outlined;
+      return AppIcons.package;
     }
     if (tagName.contains('购物')) {
-      return Icons.shopping_bag_outlined;
+      return AppIcons.shoppingCart;
     }
     if (tagName.contains('事件') || tagName.contains('日常')) {
-      return Icons.place_outlined;
+      return AppIcons.mapPin;
     }
-    return Icons.label_outline;
+    return AppIcons.tag;
   }
 
-  Widget _buildMatchedChip(String matchedAgenda) {
-    // 匹配标签 - 对齐设计文档：padding 2px 8px，圆角 4px，字号 12px，图标 12px
+  Widget _buildAgendaStatusChips(AppStore store) {
+    final agenda = record.linkedAgendaId != null
+        ? store.agendaItems.where((a) => a.id == record.linkedAgendaId).firstOrNull
+        : null;
+
+    if (agenda != null) {
+      switch (agenda.status) {
+        case AgendaStatus.completed:
+          return _buildStatusChip('已完成', Colors.green, AppIcons.checkCircle);
+        case AgendaStatus.expired:
+        case AgendaStatus.skipped:
+          return _buildStatusChip('已放弃', AppColors.textTertiary, AppIcons.xCircle);
+        case AgendaStatus.pending:
+        case AgendaStatus.postponed:
+          return Wrap(
+            spacing: 6,
+            children: [
+              _buildStatusChip('已创建', AppColors.info, AppIcons.calendar),
+              _buildStatusChip('待完成', Colors.orange, AppIcons.clock),
+            ],
+          );
+      }
+    }
+
+    return Wrap(
+      spacing: 6,
+      children: [
+        _buildStatusChip('已创建', AppColors.info, AppIcons.calendar),
+        _buildStatusChip('待完成', Colors.orange, AppIcons.clock),
+      ],
+    );
+  }
+
+  Widget _buildStatusChip(String label, Color color, IconData icon) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: AppColors.successLight,
+        color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.check, size: 12, color: AppColors.success),
+          Icon(icon, size: 12, color: color),
           const SizedBox(width: 4),
           Text(
-            '已匹配 $matchedAgenda',
-            style: const TextStyle(
+            label,
+            style: TextStyle(
               fontSize: 12,
-              color: AppColors.success,
+              color: color,
               fontWeight: FontWeight.w500,
             ),
           ),

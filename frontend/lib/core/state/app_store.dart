@@ -7,6 +7,7 @@ import '../mock/mock_data.dart';
 import '../services/llm_service.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
+import '../services/intent_recognition_service.dart';
 
 /// 全局应用状态 - 对齐 web-prototype/src/store/appStore.ts
 /// 使用 Provider + ChangeNotifier 实现 Zustand 单 Store 模式
@@ -14,6 +15,7 @@ class AppStore extends ChangeNotifier {
   final StorageService _storage = StorageService();
   final NotificationService _notification = NotificationService();
   final LlmService _llm = LlmService();
+  late final IntentRecognitionService _intentService;
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
@@ -55,6 +57,8 @@ class AppStore extends ChangeNotifier {
     await _storage.init();
     _loadFromStorage();
     await _initLlm();
+    _intentService = IntentRecognitionService(_llm);
+    await _intentService.init();
   }
 
   Future<void> _initLlm() async {
@@ -112,8 +116,10 @@ class AppStore extends ChangeNotifier {
   void _loadFromStorage() {
     _timelineRecords = _storage.loadTimeline();
     _agendaItems = _storage.loadAgenda();
-    _shoppingRecords = _storage.loadShopping();
-    _items = _storage.loadItems();
+    // 购物记录从时间线抽取，无需单独加载
+    // shoppingRecords = _storage.loadShopping();
+    // 物品记录从时间线抽取，无需单独加载
+    // _items = _storage.loadItems();
     _inventory = _storage.loadInventory();
     _customTags = _storage.loadCustomTags();
     _chatMessages = _storage.loadChatMessages();
@@ -131,8 +137,10 @@ class AppStore extends ChangeNotifier {
   void _persistAll() {
     _storage.saveTimeline(_timelineRecords);
     _storage.saveAgenda(_agendaItems);
-    _storage.saveShopping(_shoppingRecords);
-    _storage.saveItems(_items);
+    // 购物记录从时间线抽取，无需单独保存
+    // _storage.saveShopping(shoppingRecords);
+    // 物品记录从时间线抽取，无需单独保存
+    // _storage.saveItems(_items);
     _storage.saveInventory(_inventory);
     _storage.saveCustomTags(_customTags);
     _storage.saveChatMessages(_chatMessages);
@@ -167,6 +175,12 @@ class AppStore extends ChangeNotifier {
   // ===== 事程 =====
   List<AgendaItem> _agendaItems = [];
   List<AgendaItem> get agendaItems => _agendaItems;
+
+  List<TimelineRecord> get agendaTimelineRecords {
+    return _timelineRecords
+        .where((r) => r.matchedAgenda != null && r.matchedAgenda!.isNotEmpty)
+        .toList();
+  }
 
   Map<String, dynamic>? _agendaConflictWarning;
   Map<String, dynamic>? get agendaConflictWarning => _agendaConflictWarning;
@@ -219,18 +233,42 @@ class AppStore extends ChangeNotifier {
   }
 
   void completeAgenda(String id) {
+    final agenda = _agendaItems.firstWhere((a) => a.id == id, orElse: () => AgendaItem(id: '', content: '', time: '', date: ''));
     _agendaItems = _agendaItems.map((a) =>
       a.id == id ? a.copyWith(status: AgendaStatus.completed, remainingTime: null) : a
     ).toList();
     _notification.cancelReminder(id);
+    
+    addTimelineRecord(TimelineRecord(
+      id: '',
+      content: '已完成：${agenda.content}',
+      time: DateTime.now(),
+      type: TimelineType.behavior,
+      tags: ['behavior'],
+      matchedAgenda: '${agenda.time}${agenda.content}',
+      linkedAgendaId: agenda.id,
+    ));
+    
     notifyListeners();
   }
 
   void postponeAgenda(String id, int minutes) {
-    _agendaItems = _agendaItems.map((a) =>
-      a.id == id ? a.copyWith(status: AgendaStatus.postponed, remainingTime: '推迟$minutes分钟') : a
-    ).toList();
+    _agendaItems = _agendaItems.map((a) {
+      if (a.id != id) return a;
+      final parts = a.time.split(':');
+      if (parts.length != 2) return a;
+      int h = int.tryParse(parts[0]) ?? 0;
+      int m = int.tryParse(parts[1]) ?? 0;
+      int total = h * 60 + m + minutes;
+      if (total >= 24 * 60) total = 24 * 60 - 1;
+      final nh = total ~/ 60;
+      final nm = total % 60;
+      final newTime = '${nh.toString().padLeft(2, '0')}:${nm.toString().padLeft(2, '0')}';
+      return a.copyWith(time: newTime, remainingTime: '推迟$minutes分钟');
+    }).toList();
+    final updated = _agendaItems.firstWhere((a) => a.id == id);
     _notification.cancelReminder(id);
+    _scheduleReminderForAgenda(updated);
     notifyListeners();
   }
 
@@ -250,6 +288,80 @@ class AppStore extends ChangeNotifier {
 
   List<String> _disabledHighFreqAgendas = [];
   List<String> get disabledHighFreqAgendas => _disabledHighFreqAgendas;
+
+  // 晚下班检测结果
+  LateOffWorkResult? _lateOffWorkResult;
+  LateOffWorkResult? get lateOffWorkResult => _lateOffWorkResult;
+  void clearLateOffWorkResult() => _lateOffWorkResult = null;
+
+  Map<String, List<String>> _timePatterns = {};
+  Map<String, List<String>> get timePatterns => _timePatterns;
+
+  Map<String, Range> _timeSlots = {
+    '早上': Range(6, 9),
+    '早饭': Range(6, 9),
+    '早餐': Range(6, 9),
+    '上午': Range(9, 12),
+    '中午': Range(11, 13),
+    '午饭': Range(11, 13),
+    '午餐': Range(11, 13),
+    '下午': Range(13, 18),
+    '晚饭': Range(17, 19),
+    '晚餐': Range(17, 19),
+    '晚上': Range(19, 22),
+    '夜宵': Range(22, 24),
+    '睡前': Range(21, 24),
+    '起床': Range(6, 8),
+    '睡觉': Range(21, 24),
+    '午休': Range(12, 14),
+    '下午茶': Range(14, 16),
+    '下班': Range(17, 19),
+    '上班': Range(7, 9),
+    '出门': Range(7, 9),
+    '回家': Range(17, 19),
+  };
+
+  void learnTimePattern(String timeSlot, String time) {
+    _timePatterns.putIfAbsent(timeSlot, () => []);
+    _timePatterns[timeSlot]!.add(time);
+    if (_timePatterns[timeSlot]!.length > 20) {
+      _timePatterns[timeSlot] = _timePatterns[timeSlot]!.sublist(_timePatterns[timeSlot]!.length - 20);
+    }
+  }
+
+  String? inferTimeBySlot(String content) {
+    for (final entry in _timeSlots.entries) {
+      if (content.contains(entry.key)) {
+        final times = _timePatterns[entry.key];
+        if (times != null && times.isNotEmpty) {
+          return _averageTime(times);
+        }
+        return _defaultTimeForSlot(entry.key);
+      }
+    }
+    return null;
+  }
+
+  String _averageTime(List<String> times) {
+    int totalMinutes = 0;
+    for (final t in times) {
+      final parts = t.split(':');
+      if (parts.length == 2) {
+        totalMinutes += int.parse(parts[0]) * 60 + int.parse(parts[1]);
+      }
+    }
+    final avg = (totalMinutes / times.length).round();
+    return '${(avg ~/ 60).toString().padLeft(2, '0')}:${(avg % 60).toString().padLeft(2, '0')}';
+  }
+
+  String _defaultTimeForSlot(String slot) {
+    final range = _timeSlots[slot];
+    if (range != null) {
+      final avgHour = ((range.start + range.end) / 2).round();
+      return '${avgHour.toString().padLeft(2, '0')}:30';
+    }
+    return '12:00';
+  }
 
   void _generateAgendaRecommendations() {
     final todayStr = MockData.todayStr;
@@ -365,7 +477,7 @@ class AppStore extends ChangeNotifier {
 
   // ===== 时间线 =====
   List<TimelineRecord> _timelineRecords = [];
-  List<TimelineRecord> get timelineRecords => _timelineRecords;
+  List<TimelineRecord> get timelineRecords => _timelineRecords.toList()..sort((a, b) => b.time.compareTo(a.time));
 
   String addTimelineRecord(TimelineRecord record) {
     final id = _genId();
@@ -373,6 +485,19 @@ class AppStore extends ChangeNotifier {
       record.copyWith(id: id),
       ..._timelineRecords,
     ];
+
+    final timeStr = '${record.time.hour.toString().padLeft(2, '0')}:${record.time.minute.toString().padLeft(2, '0')}';
+    for (final slot in _timeSlots.keys) {
+      if (record.content.contains(slot)) {
+        learnTimePattern(slot, timeStr);
+      }
+    }
+
+    // 如果记录了"下班"相关行为，检测是否晚下班
+    if (RegExp(r'下班|回家|到家').hasMatch(record.content)) {
+      _lateOffWorkResult = checkLateOffWork();
+    }
+
     notifyListeners();
     return id;
   }
@@ -397,6 +522,24 @@ class AppStore extends ChangeNotifier {
   }
 
   void deleteTimelineRecord(String id) {
+    final recordIdx = _timelineRecords.indexWhere((r) => r.id == id);
+    if (recordIdx < 0) return;
+    final record = _timelineRecords[recordIdx];
+
+    // 删除关联的事程
+    if (record.linkedAgendaId != null) {
+      _agendaItems = _agendaItems.where((a) => a.id != record.linkedAgendaId).toList();
+    }
+
+    // 删除关联的待确认事程
+    if (record.matchedAgenda != null) {
+      _pendingAgendaConfirm = _pendingAgendaConfirm.where((p) {
+        final matchKey = '${p.suggestedTime}${p.content}';
+        return matchKey != record.matchedAgenda;
+      }).toList();
+    }
+
+    // 删除时间线记录
     _timelineRecords = _timelineRecords.where((r) => r.id != id).toList();
     notifyListeners();
   }
@@ -406,6 +549,30 @@ class AppStore extends ChangeNotifier {
       r.id == recordId ? r.copyWith(notes: r.notes.where((n) => n.id != noteId).toList()) : r
     ).toList();
     notifyListeners();
+  }
+
+  void updateRecordIntentData(String id, Map<String, dynamic> newSlots) {
+    _timelineRecords = _timelineRecords.map((r) {
+      if (r.id != id) return r;
+      final oldIntentData = r.sideEffects?.intentData;
+      if (oldIntentData == null) return r;
+      final newIntentData = IntentData(
+        intentType: oldIntentData.intentType,
+        displayName: oldIntentData.displayName,
+        slots: newSlots,
+      );
+      return r.copyWith(
+        sideEffects: r.sideEffects?.copyWith(intentData: newIntentData),
+      );
+    }).toList();
+    notifyListeners();
+  }
+
+  void reRecognizeRecord(String id) {
+    final recordIdx = _timelineRecords.indexWhere((r) => r.id == id);
+    if (recordIdx < 0) return;
+    final record = _timelineRecords[recordIdx];
+    submitVoiceRecordWithAI(record.content);
   }
 
   // ===== 自定义标签 =====
@@ -444,6 +611,28 @@ class AppStore extends ChangeNotifier {
       return {'success': false, 'error': '标签名已存在'};
     }
     _customTags = _customTags.map((t) => t.id == id ? TagDef(id: t.id, name: name, color: t.color, icon: t.icon) : t).toList();
+    notifyListeners();
+    return {'success': true};
+  }
+
+  Map<String, dynamic> editCustomTag(String id, {String? name, String? color, String? icon}) {
+    final idx = _customTags.indexWhere((t) => t.id == id);
+    if (idx < 0) {
+      return {'success': false, 'error': '标签不存在'};
+    }
+    final oldTag = _customTags[idx];
+    final newName = name ?? oldTag.name;
+    final newColor = color ?? oldTag.color;
+    final newIcon = icon ?? oldTag.icon;
+
+    if (newName != oldTag.name) {
+      final allNames = [...TagDef.systemTags.map((t) => t.name), ..._customTags.where((t) => t.id != id).map((t) => t.name)];
+      if (allNames.contains(newName)) {
+        return {'success': false, 'error': '标签名已存在'};
+      }
+    }
+
+    _customTags = _customTags.map((t) => t.id == id ? TagDef(id: t.id, name: newName, color: newColor, icon: newIcon) : t).toList();
     notifyListeners();
     return {'success': true};
   }
@@ -517,30 +706,68 @@ class AppStore extends ChangeNotifier {
   ConversationContext get conversationContext => _context;
 
   // ===== 购物 =====
-  List<ShoppingRecord> _shoppingRecords = [];
-  List<ShoppingRecord> get shoppingRecords => _shoppingRecords;
+  List<ShoppingRecord> get shoppingRecords {
+    return _timelineRecords
+        .where((r) => r.type == TimelineType.shopping && r.sideEffects?.shoppingRecord != null)
+        .map((r) => r.sideEffects!.shoppingRecord!)
+        .toList();
+  }
 
   void addShoppingRecord(ShoppingRecord record) {
-    _shoppingRecords = [record, ..._shoppingRecords];
-    notifyListeners();
+    final itemStr = record.items.map((i) => '${i.name}${i.quantity}${i.unit}').join('、');
+    final content = '在${record.store}购买了$itemStr';
+    
+    addTimelineRecord(TimelineRecord(
+      id: '',
+      content: content,
+      time: record.time,
+      type: TimelineType.shopping,
+      tags: ['shopping'],
+      sideEffects: SideEffects(shoppingRecord: record),
+    ));
   }
 
   // ===== 物品 =====
-  List<ItemRecord> _items = [];
-  List<ItemRecord> get items => _items;
-
-  void updateItemLocation(String name, String location) {
-    _items = _items.map((it) {
-      if (it.name != name) return it;
+  List<ItemRecord> get items {
+    final Map<String, List<TimelineRecord>> itemRecords = {};
+    for (final r in _timelineRecords) {
+      if (r.sideEffects?.itemUpdate != null) {
+        final name = r.sideEffects!.itemUpdate!.name;
+        itemRecords.putIfAbsent(name, () => []);
+        itemRecords[name]!.add(r);
+      }
+    }
+    
+    return itemRecords.entries.map((entry) {
+      final name = entry.key;
+      final records = entry.value;
+      records.sort((a, b) => b.time.compareTo(a.time));
+      final latest = records.first;
+      final location = latest.sideEffects!.itemUpdate!.location;
+      final history = records.map((r) => LocationHistory(
+        id: r.id,
+        location: r.sideEffects!.itemUpdate!.location,
+        time: r.time,
+      )).toList();
+      
       return ItemRecord(
-        id: it.id,
-        name: it.name,
+        id: 'item_$name',
+        name: name,
         location: location,
-        tags: it.tags,
-        history: [LocationHistory(id: _genId(), location: location, time: DateTime.now()), ...it.history],
+        history: history,
       );
     }).toList();
-    notifyListeners();
+  }
+
+  void updateItemLocation(String name, String location) {
+    addTimelineRecord(TimelineRecord(
+      id: '',
+      content: '$name 存放在 $location',
+      time: DateTime.now(),
+      type: TimelineType.item,
+      tags: ['item'],
+      sideEffects: SideEffects(itemUpdate: ItemUpdate(name: name, location: location)),
+    ));
   }
 
   // ===== 库存 =====
@@ -679,22 +906,39 @@ class AppStore extends ChangeNotifier {
   }
 
   void confirmPendingAgenda(List<String> ids) {
-    final todayStr = MockData.todayStr;
     for (final item in _pendingAgendaConfirm.where((p) => ids.contains(p.id))) {
+      final agendaId = _genId();
       addAgenda(AgendaItem(
-        id: _genId(),
+        id: agendaId,
         content: item.content,
         time: item.suggestedTime,
-        date: todayStr,
+        date: item.suggestedDate,
         status: AgendaStatus.pending,
-        remainingTime: '今日提醒',
+        remainingTime: item.suggestedDate == MockData.todayStr ? '今日提醒' : '待提醒',
       ));
+      // 关联时间线记录
+      final matchKey = '${item.suggestedTime}${item.content}';
+      _timelineRecords = _timelineRecords.map((r) {
+        if (r.matchedAgenda == matchKey && r.linkedAgendaId == null) {
+          return r.copyWith(linkedAgendaId: agendaId);
+        }
+        return r;
+      }).toList();
     }
     _pendingAgendaConfirm = _pendingAgendaConfirm.where((p) => !ids.contains(p.id)).toList();
     notifyListeners();
   }
 
   void rejectPendingAgenda(List<String> ids) {
+    for (final item in _pendingAgendaConfirm.where((p) => ids.contains(p.id))) {
+      final matchKey = '${item.suggestedTime}${item.content}';
+      _timelineRecords = _timelineRecords.map((r) {
+        if (r.matchedAgenda == matchKey && r.linkedAgendaId == null) {
+          return r.copyWith(matchedAgenda: null);
+        }
+        return r;
+      }).toList();
+    }
     _pendingAgendaConfirm = _pendingAgendaConfirm.where((p) => !ids.contains(p.id)).toList();
     notifyListeners();
   }
@@ -710,9 +954,21 @@ class AppStore extends ChangeNotifier {
         id: p.id,
         content: p.content,
         suggestedTime: time,
+        suggestedDate: p.suggestedDate,
         timeSource: TimeSource.userSpecified,
       ) : p
     ).toList();
+    notifyListeners();
+  }
+
+  /// 将时间线记录关联到事程（用于弹窗编辑后手动关联）
+  void linkTimelineToAgenda(String matchedAgendaKey, String agendaId) {
+    _timelineRecords = _timelineRecords.map((r) {
+      if (r.matchedAgenda == matchedAgendaKey && r.linkedAgendaId == null) {
+        return r.copyWith(linkedAgendaId: agendaId);
+      }
+      return r;
+    }).toList();
     notifyListeners();
   }
 
@@ -743,6 +999,395 @@ class AppStore extends ChangeNotifier {
   }
 
   // ===== 语音录入综合处理 =====
+
+  /// AI意图识别版语音记录 - 异步，使用意图识别服务（支持多时间点多意图）
+  Future<Map<String, dynamic>> submitVoiceRecordWithAI(String text) async {
+    final t = text.trim();
+    final now = DateTime.now();
+
+    // 清除之前的待确认事程，避免累积
+    clearPendingAgenda();
+
+    // 1. 调用意图识别服务
+    final intentResult = await _intentService.recognize(t);
+
+    // 2. 如果只有一个时间槽，走单条记录逻辑
+    final slots = intentResult.timelineSlots;
+
+    // 无论多少时间槽，都只创建一条时间线记录
+    // 时间线记录时间始终使用当前时间，计划时间只用于事程
+    final parsed = _convertIntentResult(t, intentResult);
+    final tags = parsed['tags'] as List<String>;
+    final sideEffects = parsed['sideEffects'] as Map<String, dynamic>?;
+    final hasCompleteSignal = parsed['hasCompleteSignal'] as bool;
+
+    // 关键修复：时间线记录时间始终使用当前时间，不是计划时间
+    final result = _processVoiceRecord(t, now, tags, sideEffects, hasCompleteSignal, intentResult);
+    result['_intentResult'] = intentResult;
+    return result;
+  }
+
+  /// 从时间槽中解析时间，返回DateTime
+  DateTime _parseSlotTime(TimelineSlot slot, DateTime fallback) {
+    if (slot.time.isEmpty) return fallback;
+    final parts = slot.time.split(':');
+    if (parts.length != 2) return fallback;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) return fallback;
+    return DateTime(fallback.year, fallback.month, fallback.day, hour, minute);
+  }
+
+  /// 将意图识别结果转换为_parseVoiceText的输出格式（支持多意图多时间点）
+  Map<String, dynamic> _convertIntentResult(String text, IntentResult intentResult) {
+    final tags = <String>[];
+    final sideEffects = <String, dynamic>{};
+    bool hasCompleteSignal = false;
+
+    for (final intent in intentResult.allIntents) {
+      switch (intent.type) {
+        case IntentType.itemLocation:
+          tags.add('item');
+          final itemName = intent.slots['item_name'] as String?;
+          final location = intent.slots['location'] as String?;
+          if (itemName != null && location != null) {
+            sideEffects['itemUpdate'] = ItemUpdate(name: itemName, location: location);
+          }
+          break;
+
+        case IntentType.shopping:
+          tags.add('shopping');
+          final store = intent.slots['store'] as String? ?? '';
+          final itemsText = intent.slots['items_text'] as String? ?? '';
+          final items = <ShoppingItem>[];
+          if (intent.slots['items'] is List) {
+            for (final item in intent.slots['items'] as List) {
+              if (item is Map<String, dynamic>) {
+                items.add(ShoppingItem(
+                  id: _genId(),
+                  name: item['name'] as String? ?? '',
+                  quantity: (item['quantity'] as num?)?.toInt() ?? 1,
+                  unit: item['unit'] as String? ?? '个',
+                ));
+              }
+            }
+          }
+          if (items.isEmpty && itemsText.isNotEmpty) {
+            final names = itemsText.split(RegExp(r'[，,、和]')).where((s) => s.trim().isNotEmpty);
+            for (final n in names) {
+              items.add(ShoppingItem(id: _genId(), name: n.trim()));
+            }
+          }
+          sideEffects['shoppingRecord'] = ShoppingRecord(
+            id: '',
+            store: store,
+            items: items,
+            time: DateTime.now(),
+          );
+          break;
+
+        case IntentType.agendaCreate:
+          final time = intent.slots['time'] as String?;
+          final content = intent.slots['content'] as String? ?? text;
+          final isMustDo = intent.slots['is_must_do'] as bool? ?? false;
+          final dateOffset = (intent.slots['date_offset'] as num?)?.toInt() ?? 0;
+          final agendaItem = {
+            'time': time, // 不默认填充当前时间，留空由后续逻辑推断
+            'content': content,
+            'isMustDo': isMustDo,
+            'date_offset': dateOffset,
+          };
+          // 收集多个事程到 agendaList，同时保留最后一个到 agenda 以兼容旧逻辑
+          if (!sideEffects.containsKey('agendaList')) {
+            sideEffects['agendaList'] = <Map<String, dynamic>>[];
+          }
+          (sideEffects['agendaList'] as List).add(agendaItem);
+          sideEffects['agenda'] = agendaItem;
+          break;
+
+        case IntentType.agendaComplete:
+          hasCompleteSignal = true;
+          sideEffects['completeMatch'] = true;
+          break;
+
+        case IntentType.inventoryConsume:
+          if (!tags.contains('behavior')) {
+            tags.add('behavior');
+          }
+          final itemName = intent.slots['item_name'] as String? ?? '';
+          final quantity = (intent.slots['quantity'] as num?)?.toDouble() ?? 1.0;
+          final unit = intent.slots['unit'] as String? ?? '个';
+          sideEffects['inventoryUpdate'] = InventoryUpdate(
+            name: itemName,
+            quantityChange: -quantity,
+            unit: unit,
+            reason: '消耗使用',
+          );
+          sideEffects['intentData'] = IntentData(
+            intentType: 'inventory_consume',
+            displayName: '库存消耗',
+            slots: {
+              'item_name': itemName,
+              'quantity': quantity,
+              'unit': unit,
+            },
+          );
+          break;
+
+        case IntentType.behavior:
+          if (!tags.contains('behavior')) {
+            tags.add('behavior');
+          }
+          final keyword = intent.slots['keyword'] as String? ?? text;
+          final category = _inferBehaviorCategory(keyword);
+          sideEffects['intentData'] = IntentData(
+            intentType: 'behavior',
+            displayName: '行为活动',
+            slots: {
+              'keyword': keyword,
+              'category': category,
+            },
+          );
+          break;
+
+        case IntentType.general:
+          break;
+      }
+    }
+
+    if (tags.isEmpty) tags.add('event');
+
+    return {'tags': tags, 'sideEffects': sideEffects, 'hasCompleteSignal': hasCompleteSignal};
+  }
+
+  /// 推断行为分类
+  String _inferBehaviorCategory(String keyword) {
+    final healthKeywords = ['吃药', '服药', '量血压', '测血糖', '看病', '就医', '体检', '打针', '输液'];
+    final dietKeywords = ['吃饭', '吃早饭', '吃午饭', '吃晚饭', '吃面', '吃米', '吃菜', '喝水', '喝汤', '吃水果'];
+    final exerciseKeywords = ['运动', '散步', '跑步', '锻炼', '健身', '瑜伽', '太极', '走路', '爬山'];
+    final dailyKeywords = ['起床', '睡觉', '洗漱', '洗澡', '刷牙', '洗脸', '穿衣', '出门', '回家'];
+    final socialKeywords = ['聊天', '打电话', '视频', '聚会', '访友', '接孙子', '陪孙子', '买菜'];
+
+    if (healthKeywords.any((k) => keyword.contains(k))) return '健康';
+    if (dietKeywords.any((k) => keyword.contains(k))) return '饮食';
+    if (exerciseKeywords.any((k) => keyword.contains(k))) return '运动';
+    if (dailyKeywords.any((k) => keyword.contains(k))) return '日常';
+    if (socialKeywords.any((k) => keyword.contains(k))) return '社交';
+    return '其他';
+  }
+
+  /// 处理语音记录的共享逻辑
+  Map<String, dynamic> _processVoiceRecord(
+    String t,
+    DateTime now,
+    List<String> tags,
+    Map<String, dynamic>? sideEffects,
+    bool hasCompleteSignal,
+    IntentResult? intentResult,
+  ) {
+    final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    // 事程处理
+    String? matchedAgenda;
+    String? linkedAgendaId;
+    int agendaCreatedCount = 0;
+    bool needsConfirm = false;
+
+    // 辅助：推断事程时间
+    String _inferAgendaTime(String? agTime, String agContent) {
+      // 如果LLM没有返回时间，或内容与返回时间明显不匹配，触发推断
+      final hasExplicitTime = agTime != null && agTime.isNotEmpty;
+      final needsInference = !hasExplicitTime || _shouldInferTime(agTime, agContent);
+      if (needsInference) {
+        final fromHistory = inferAgendaTimeByContent(agContent);
+        if (fromHistory != null) return fromHistory;
+        final fromCommon = inferAgendaTimeByCommonSense(agContent);
+        if (fromCommon != null) return fromCommon;
+      }
+      return agTime ?? timeStr;
+    }
+
+    TimeSource _inferTimeSource(String? agTime, String agContent) {
+      final hasExplicitTime = agTime != null && agTime.isNotEmpty;
+      final needsInference = !hasExplicitTime || _shouldInferTime(agTime, agContent);
+      if (!needsInference) return TimeSource.userSpecified;
+      final fromHistory = inferAgendaTimeByContent(agContent);
+      if (fromHistory != null) return TimeSource.history;
+      final fromCommon = inferAgendaTimeByCommonSense(agContent);
+      if (fromCommon != null) return TimeSource.commonSense;
+      return TimeSource.current;
+    }
+
+    if (sideEffects?['agendaList'] != null) {
+      final agendaList = sideEffects!['agendaList'] as List<Map<String, dynamic>>;
+      final pendingItems = <PendingAgendaItem>[];
+      for (final ag in agendaList) {
+        final agTime = ag['time'] as String?;
+        final agContent = ag['content'] as String? ?? t;
+        final dateOffset = (ag['date_offset'] as num?)?.toInt() ?? 0;
+        final agDate = MockData.dateOffset(dateOffset);
+        final finalTime = _inferAgendaTime(agTime, agContent);
+        final source = _inferTimeSource(agTime, agContent);
+        pendingItems.add(PendingAgendaItem(
+          id: _genId(),
+          content: agContent,
+          suggestedTime: finalTime,
+          suggestedDate: agDate,
+          timeSource: source,
+        ));
+      }
+      addPendingAgenda(pendingItems);
+      agendaCreatedCount = pendingItems.length;
+      needsConfirm = true;
+      matchedAgenda = '${pendingItems.first.suggestedTime}${pendingItems.first.content}';
+    } else if (sideEffects?['agenda'] != null) {
+      final ag = sideEffects!['agenda'] as Map<String, dynamic>;
+      final agTime = ag['time'] as String?;
+      final agContent = ag['content'] as String? ?? t;
+      final dateOffset = (ag['date_offset'] as num?)?.toInt() ?? 0;
+      final agDate = MockData.dateOffset(dateOffset);
+      final finalTime = _inferAgendaTime(agTime, agContent);
+      final source = _inferTimeSource(agTime, agContent);
+      addPendingAgenda([PendingAgendaItem(
+        id: _genId(),
+        content: agContent,
+        suggestedTime: finalTime,
+        suggestedDate: agDate,
+        timeSource: source,
+      )]);
+      agendaCreatedCount = 1;
+      needsConfirm = true;
+      matchedAgenda = '$finalTime$agContent';
+    } else if (sideEffects?['completeMatch'] == true || hasCompleteSignal) {
+      final behaviorMatch = RegExp(r'(吃药|吃饭|喝水|运动|散步|早饭|午饭|晚饭|睡觉|起床|洗漱|阅读)').firstMatch(t);
+      if (behaviorMatch != null) {
+        final keyword = behaviorMatch.group(1)!;
+        final matched = _agendaItems.where((a) =>
+          a.date == MockData.todayStr &&
+          a.status == AgendaStatus.pending &&
+          a.content.contains(keyword)
+        ).firstOrNull;
+        if (matched != null) {
+          matchedAgenda = '${matched.time}${matched.content}';
+          linkedAgendaId = matched.id;
+          completeAgenda(matched.id);
+        }
+      }
+    }
+
+    // 构建 sideEffects
+    SideEffects? recordSideEffects;
+    ShoppingRecord? shoppingRecord;
+    ItemUpdate? itemUpdate;
+    InventoryUpdate? inventoryUpdate;
+    IntentData? intentData;
+    String? agendaStr;
+    List<String>? agendaListStr;
+
+    if (sideEffects?['shoppingRecord'] != null) {
+      final sr = sideEffects!['shoppingRecord'] as ShoppingRecord;
+      shoppingRecord = ShoppingRecord(
+        id: _genId(),
+        store: sr.store,
+        items: sr.items,
+        time: now,
+      );
+    }
+    if (sideEffects?['itemUpdate'] != null) {
+      itemUpdate = sideEffects!['itemUpdate'] as ItemUpdate;
+    }
+    if (sideEffects?['inventoryUpdate'] != null) {
+      inventoryUpdate = sideEffects!['inventoryUpdate'] as InventoryUpdate;
+    }
+    if (sideEffects?['intentData'] != null) {
+      intentData = sideEffects!['intentData'] as IntentData;
+    }
+    if (sideEffects?['agenda'] != null) {
+      final ag = sideEffects!['agenda'] as Map<String, dynamic>;
+      agendaStr = '${ag['time'] ?? ''} ${ag['content'] ?? ''}';
+    }
+    if (sideEffects?['agendaList'] != null) {
+      final agList = sideEffects!['agendaList'] as List;
+      agendaListStr = agList.map((ag) => '${ag['time'] ?? ''} ${ag['content'] ?? ''}').toList().cast<String>();
+    }
+
+    if (shoppingRecord != null || itemUpdate != null || inventoryUpdate != null || intentData != null || agendaStr != null) {
+      recordSideEffects = SideEffects(
+        shoppingRecord: shoppingRecord,
+        itemUpdate: itemUpdate,
+        inventoryUpdate: inventoryUpdate,
+        intentData: intentData,
+        agenda: agendaStr,
+        agendaList: agendaListStr,
+      );
+    }
+
+    // 写入时间线
+    addTimelineRecord(TimelineRecord(
+      id: '',
+      content: t,
+      time: now,
+      type: _parseType(tags),
+      tags: tags,
+      matchedAgenda: matchedAgenda,
+      linkedAgendaId: linkedAgendaId,
+      sideEffects: recordSideEffects,
+    ));
+
+    if (shoppingRecord != null) {
+      // 购物记录已通过sideEffects写入时间线，shoppingRecords getter会自动提取
+    }
+
+    return {
+      'timelineId': _timelineRecords.last.id,
+      'intent': intentResult?.primary.label ?? 'unknown',
+      'confidence': intentResult?.primary.confidence ?? 0,
+      'source': intentResult?.source ?? 'rule',
+      'reason': intentResult?.reason,
+      'agendaCreated': agendaCreatedCount,
+      'needsConfirm': needsConfirm,
+      'feedback': null,
+    };
+  }
+
+  /// 意图识别统计信息
+  Map<String, dynamic> getIntentStats() {
+    return _intentService.getStats();
+  }
+
+  /// 获取所有训练模式
+  List<UserPattern> get allIntentPatterns => _intentService.allPatterns;
+
+  /// 手动添加/更新训练模式
+  Future<void> addIntentPattern(String text, List<TimelineSlot> slots) async {
+    await _intentService.addPattern(text, slots);
+    notifyListeners();
+  }
+
+  /// 更新训练模式（编辑）
+  Future<void> updateIntentPattern(String oldText, String newText, List<TimelineSlot> slots) async {
+    await _intentService.updatePattern(oldText, newText, slots);
+    notifyListeners();
+  }
+
+  /// 删除训练模式
+  Future<void> deleteIntentPattern(String text) async {
+    await _intentService.deletePattern(text);
+    notifyListeners();
+  }
+
+  /// 清空所有训练模式
+  Future<void> clearAllIntentPatterns() async {
+    await _intentService.clearPatterns();
+    notifyListeners();
+  }
+
+  /// 加载预设模式（预训练）
+  Future<void> loadPresetPatterns() async {
+    await _intentService.loadPresetPatterns();
+    notifyListeners();
+  }
+
   Map<String, dynamic> submitVoiceRecord(String text) {
     final t = text.trim();
     final now = DateTime.now();
@@ -752,6 +1397,7 @@ class AppStore extends ChangeNotifier {
     final parsed = _parseVoiceText(t);
     var tags = parsed['tags'] as List<String>;
     final sideEffects = parsed['sideEffects'] as Map<String, dynamic>?;
+    final hasCompleteSignal = parsed['hasCompleteSignal'] as bool;
 
     // 事程处理
     String? matchedAgenda;
@@ -765,6 +1411,8 @@ class AppStore extends ChangeNotifier {
       for (final ag in agendaList) {
         final agTime = ag['time'] as String? ?? timeStr;
         final agContent = ag['content'] as String? ?? t;
+        final dateOffset = (ag['date_offset'] as num?)?.toInt() ?? 0;
+        final agDate = MockData.dateOffset(dateOffset);
 
         String finalTime = agTime;
         TimeSource source = TimeSource.current;
@@ -788,6 +1436,7 @@ class AppStore extends ChangeNotifier {
           id: _genId(),
           content: agContent,
           suggestedTime: finalTime,
+          suggestedDate: agDate,
           timeSource: source,
         ));
       }
@@ -799,6 +1448,8 @@ class AppStore extends ChangeNotifier {
       final ag = sideEffects!['agenda'] as Map<String, dynamic>;
       final agTime = ag['time'] as String? ?? timeStr;
       final agContent = ag['content'] as String? ?? t;
+      final dateOffset = (ag['date_offset'] as num?)?.toInt() ?? 0;
+      final agDate = MockData.dateOffset(dateOffset);
 
       // 智能推断时间
       String finalTime = agTime;
@@ -823,6 +1474,7 @@ class AppStore extends ChangeNotifier {
         id: _genId(),
         content: agContent,
         suggestedTime: finalTime,
+        suggestedDate: agDate,
         timeSource: source,
       )]);
       agendaCreatedCount = 1;
@@ -843,9 +1495,8 @@ class AppStore extends ChangeNotifier {
           completeAgenda(matched.id);
         }
       }
-    } else {
-      // 默认尝试匹配已有事程（完成）
-      final behaviorMatch = RegExp(r'(吃药|吃饭|喝水|运动|散步|早饭|午饭|晚饭)').firstMatch(t);
+    } else if (hasCompleteSignal) {
+      final behaviorMatch = RegExp(r'(吃药|吃饭|喝水|运动|散步|早饭|午饭|晚饭|睡觉|起床|洗漱|阅读)').firstMatch(t);
       if (behaviorMatch != null) {
         final keyword = behaviorMatch.group(1)!;
         final matched = _agendaItems.where((a) =>
@@ -860,6 +1511,44 @@ class AppStore extends ChangeNotifier {
       }
     }
 
+    // 构建 sideEffects
+    SideEffects? recordSideEffects;
+    ShoppingRecord? shoppingRecord;
+    ItemUpdate? itemUpdate;
+    String? agenda;
+    InventoryUpdate? inventoryUpdate;
+    
+    if (sideEffects?['shoppingRecord'] != null) {
+      final sr = sideEffects!['shoppingRecord'] as ShoppingRecord;
+      shoppingRecord = ShoppingRecord(
+        id: _genId(),
+        store: sr.store,
+        items: sr.items,
+        time: now,
+      );
+    }
+    if (sideEffects?['itemUpdate'] != null) {
+      itemUpdate = sideEffects!['itemUpdate'] as ItemUpdate;
+    }
+    if (sideEffects?['agenda'] != null) {
+      agenda = sideEffects!['agenda'] as String;
+    }
+    if (sideEffects?['agendaList'] != null) {
+      // agendaList 在后面处理，这里先不构建
+    }
+    if (sideEffects?['inventoryUpdate'] != null) {
+      inventoryUpdate = sideEffects!['inventoryUpdate'] as InventoryUpdate;
+    }
+    
+    if (shoppingRecord != null || itemUpdate != null || agenda != null || inventoryUpdate != null) {
+      recordSideEffects = SideEffects(
+        shoppingRecord: shoppingRecord,
+        itemUpdate: itemUpdate,
+        agenda: agenda,
+        inventoryUpdate: inventoryUpdate,
+      );
+    }
+
     // 写入时间线
     final timelineId = addTimelineRecord(TimelineRecord(
       id: '',
@@ -868,27 +1557,15 @@ class AppStore extends ChangeNotifier {
       type: _parseType(tags),
       tags: tags,
       matchedAgenda: matchedAgenda,
+      sideEffects: recordSideEffects,
     ));
 
-    // 副作用
-    if (sideEffects?['shoppingRecord'] != null) {
-      final sr = sideEffects!['shoppingRecord'] as ShoppingRecord;
-      addShoppingRecord(ShoppingRecord(
-        id: _genId(),
-        store: sr.store,
-        items: sr.items,
-        time: now,
-      ));
-      // 购物自动入库
-      addInventoryFromShopping(sr.items);
+    // 副作用（只处理不需要额外时间线记录的操作）
+    if (shoppingRecord != null) {
+      addInventoryFromShopping(shoppingRecord.items);
     }
-    if (sideEffects?['itemUpdate'] != null) {
-      final iu = sideEffects!['itemUpdate'] as ItemUpdate;
-      updateItemLocation(iu.name, iu.location);
-    }
-    if (sideEffects?['inventoryUpdate'] != null) {
-      final inv = sideEffects!['inventoryUpdate'] as InventoryUpdate;
-      updateInventory(inv.name, inv.quantityChange, inv.unit, reason: inv.reason);
+    if (inventoryUpdate != null) {
+      updateInventory(inventoryUpdate.name, inventoryUpdate.quantityChange, inventoryUpdate.unit, reason: inventoryUpdate.reason);
     }
 
     return {
@@ -978,6 +1655,36 @@ class AppStore extends ChangeNotifier {
       }
     }
 
+    // 构建 sideEffects
+    SideEffects? recordSideEffects;
+    ShoppingRecord? shoppingRecord;
+    ItemUpdate? itemUpdate;
+    InventoryUpdate? inventoryUpdate;
+    
+    if (sideEffects?['shoppingRecord'] != null) {
+      final sr = sideEffects!['shoppingRecord'] as ShoppingRecord;
+      shoppingRecord = ShoppingRecord(
+        id: _genId(),
+        store: sr.store,
+        items: sr.items,
+        time: now,
+      );
+    }
+    if (sideEffects?['itemUpdate'] != null) {
+      itemUpdate = sideEffects!['itemUpdate'] as ItemUpdate;
+    }
+    if (sideEffects?['inventoryUpdate'] != null) {
+      inventoryUpdate = sideEffects!['inventoryUpdate'] as InventoryUpdate;
+    }
+    
+    if (shoppingRecord != null || itemUpdate != null || inventoryUpdate != null) {
+      recordSideEffects = SideEffects(
+        shoppingRecord: shoppingRecord,
+        itemUpdate: itemUpdate,
+        inventoryUpdate: inventoryUpdate,
+      );
+    }
+
     // 写入时间线
     addTimelineRecord(TimelineRecord(
       id: '',
@@ -986,26 +1693,15 @@ class AppStore extends ChangeNotifier {
       type: _parseType(tags),
       tags: tags,
       matchedAgenda: matchedAgenda,
+      sideEffects: recordSideEffects,
     ));
 
-    // 副作用
-    if (sideEffects?['shoppingRecord'] != null) {
-      final sr = sideEffects!['shoppingRecord'] as ShoppingRecord;
-      addShoppingRecord(ShoppingRecord(
-        id: _genId(),
-        store: sr.store,
-        items: sr.items,
-        time: now,
-      ));
-      addInventoryFromShopping(sr.items);
+    // 副作用（只处理不需要额外时间线记录的操作）
+    if (shoppingRecord != null) {
+      addInventoryFromShopping(shoppingRecord.items);
     }
-    if (sideEffects?['itemUpdate'] != null) {
-      final iu = sideEffects!['itemUpdate'] as ItemUpdate;
-      updateItemLocation(iu.name, iu.location);
-    }
-    if (sideEffects?['inventoryUpdate'] != null) {
-      final inv = sideEffects!['inventoryUpdate'] as InventoryUpdate;
-      updateInventory(inv.name, inv.quantityChange, inv.unit, reason: inv.reason);
+    if (inventoryUpdate != null) {
+      updateInventory(inventoryUpdate.name, inventoryUpdate.quantityChange, inventoryUpdate.unit, reason: inventoryUpdate.reason);
     }
 
   }
@@ -1048,13 +1744,13 @@ class AppStore extends ChangeNotifier {
     final tags = <String>[];
     final sideEffects = <String, dynamic>{};
 
-    // 物品位置
-    final itemMatch = RegExp(r'(?:把)?([\u4e00-\u9fa5A-Za-z]{1,8}?)(?:放|搁|塞)在?(?:了)?([\u4e00-\u9fa5A-Za-z]+)').firstMatch(t);
+    // 物品位置 - 支持多种句式：把X放Y、X放Y、放到Y、放在Y
+    final itemMatch = RegExp(r'(?:把|将)?\s*([\u4e00-\u9fa5A-Za-z]{1,8}?)\s*(?:放|搁|塞)(?:在|到)?(?:了)?\s*([\u4e00-\u9fa5A-Za-z]+)').firstMatch(t);
     if (itemMatch != null && itemMatch.groupCount >= 2) {
       tags.add('item');
       sideEffects['itemUpdate'] = ItemUpdate(
         name: itemMatch.group(1)!.trim(),
-        location: itemMatch.group(2)!.trim(),
+        location: itemMatch.group(2)!.trim().replaceAll(RegExp(r'^(在|到)'), '').replaceAll(RegExp(r'(中|里|上|下|内)$'), ''),
       );
     }
 
@@ -1127,9 +1823,18 @@ class AppStore extends ChangeNotifier {
     // 事程识别 - 完整的创建/完成意图判断
     final reminderKeywords = ['记得', '别忘了', '提醒我', '要记得', '一定要', '需要', '要做', '得去', '准备'];
     final mustDoKeywords = ['必做', '必须', '一定', '务必'];
-    final completedKeywords = ['正在', '刚', '刚刚', '已经', '过了', '完了', '吃完了', '喝完了', '吃过了', '做完了'];
+    final completedKeywords = ['刚', '刚刚', '已经', '过了', '完了', '吃完了', '喝完了', '吃过了', '做完了'];
     final pastSuffixes = ['完了', '过了', '好了', '完', '过'];
     final futureTimeKeywords = ['明天', '下周', '下次', '以后'];
+
+    int dateOffset = 0;
+    if (t.contains('大后天')) {
+      dateOffset = 3;
+    } else if (t.contains('后天')) {
+      dateOffset = 2;
+    } else if (t.contains('明天')) {
+      dateOffset = 1;
+    }
 
     bool hasCreateSignal = reminderKeywords.any((kw) => t.contains(kw)) || futureTimeKeywords.any((kw) => t.contains(kw));
     bool hasCompleteSignal = completedKeywords.any((kw) => t.contains(kw)) || pastSuffixes.any((kw) => t.endsWith(kw));
@@ -1176,6 +1881,17 @@ class AppStore extends ChangeNotifier {
         for (final part in parts) {
           final p = part.trim();
           if (p.isEmpty) continue;
+
+          // 每个子句独立解析日期偏移
+          int partDateOffset = 0;
+          if (p.contains('大后天')) {
+            partDateOffset = 3;
+          } else if (p.contains('后天')) {
+            partDateOffset = 2;
+          } else if (p.contains('明天')) {
+            partDateOffset = 1;
+          }
+
           String? agTime;
           final hhmm = RegExp(r'(\d{1,2})[:：](\d{2})').firstMatch(p);
           final point = RegExp(r'(\d{1,2})点(?:(\d{1,2})分)?').firstMatch(p);
@@ -1184,21 +1900,35 @@ class AppStore extends ChangeNotifier {
           } else if (point != null) {
             int hour = int.parse(point.group(1)!);
             int min = point.group(2) != null ? int.parse(point.group(2)!) : 0;
-            if ((t.contains('下午') || t.contains('晚上')) && hour < 12) hour += 12;
+            if ((p.contains('下午') || p.contains('晚上')) && hour < 12) hour += 12;
             agTime = '${hour.toString().padLeft(2, '0')}:${min.toString().padLeft(2, '0')}';
           }
+
+          // 如果子句没有显式时间，尝试通过时间段关键词推断
+          agTime ??= inferTimeBySlot(p) ?? inferAgendaTimeByCommonSense(p);
+
           String content = p
               .replaceAll(RegExp(r'^(记得|别忘了|提醒我|要记得|一定要|需要|要做|得去|准备)[，, ]?'), '')
-              .replaceAll(RegExp(r'(早上|上午|中午|下午|晚上|凌晨)?\d{1,2}点(?:\d{1,2}分)?[钟]?[，, ]?'), '')
+              .replaceAll(RegExp(r'(大后天|后天|明天|今天)[，, ]?'), '')
+              .replaceAll(RegExp(r'(早上|上午|中午|下午|晚上|凌晨|早饭|午饭|晚饭|下班)?\d{1,2}点(?:\d{1,2}分)?[钟]?[，, ]?'), '')
               .replaceAll(RegExp(r'\d{1,2}[:：]\d{2}[，, ]?'), '')
               .replaceAll(RegExp(r'[（(]?必做[）)]?'), '')
               .trim();
+
+          // 如果去除关键词后内容为空（如"明天早饭"），保留原文中的关键信息
+          if (content.isEmpty) {
+            content = p
+                .replaceAll(RegExp(r'^(记得|别忘了|提醒我|要记得|一定要|需要|要做|得去|准备)[，, ]?'), '')
+                .replaceAll(RegExp(r'(大后天|后天|明天|今天)[，, ]?'), '')
+                .trim();
+          }
           if (content.isNotEmpty) {
             final now = DateTime.now();
             agendaList.add({
               'time': agTime ?? '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
               'content': content,
               'isMustDo': hasMustDoSignal,
+              'date_offset': partDateOffset,
             });
           }
         }
@@ -1236,6 +1966,7 @@ class AppStore extends ChangeNotifier {
         'time': agTime ?? '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
         'content': content,
         'isMustDo': hasMustDoSignal,
+        'date_offset': dateOffset,
       };
     }
 
@@ -1259,7 +1990,7 @@ class AppStore extends ChangeNotifier {
       if (!tags.contains('event')) tags.add('event');
     }
 
-    return {'tags': tags, 'sideEffects': sideEffects};
+    return {'tags': tags, 'sideEffects': sideEffects, 'hasCompleteSignal': hasCompleteSignal};
   }
 
   TimelineType _parseType(List<String> tags) {
@@ -1271,7 +2002,10 @@ class AppStore extends ChangeNotifier {
 
   // ===== 时间推断 =====
   String? inferAgendaTimeByContent(String content) {
-    final behaviorMatch = RegExp(r'(吃药|吃饭|早饭|午饭|晚饭|运动|散步|喝水|睡觉|起床|洗漱)').firstMatch(content);
+    final fromSlot = inferTimeBySlot(content);
+    if (fromSlot != null) return fromSlot;
+
+    final behaviorMatch = RegExp(r'(吃药|吃饭|早饭|午饭|晚饭|运动|散步|喝水|睡觉|起床|洗漱|上班|下班)').firstMatch(content);
     String keyword = behaviorMatch?.group(1) ?? (content.isNotEmpty ? content.substring(0, content.length.clamp(0, 2)) : '');
     final matched = _timelineRecords.where((r) => r.content.contains(keyword)).toList();
     if (matched.isEmpty) return null;
@@ -1284,15 +2018,45 @@ class AppStore extends ChangeNotifier {
   }
 
   String? inferAgendaTimeByCommonSense(String content) {
-    if (RegExp(r'早饭|早餐').hasMatch(content)) return '07:30';
-    if (RegExp(r'午饭|午餐|吃中饭').hasMatch(content)) return '12:00';
-    if (RegExp(r'晚饭|晚餐|吃晚饭').hasMatch(content)) return '18:00';
-    if (RegExp(r'吃药').hasMatch(content)) return '08:00';
+    if (RegExp(r'早饭|早餐|早上吃').hasMatch(content)) return '07:30';
+    if (RegExp(r'午饭|午餐|吃中饭|中午吃').hasMatch(content)) return '12:00';
+    if (RegExp(r'晚饭|晚餐|吃晚饭|晚上吃').hasMatch(content)) return '18:00';
+    if (RegExp(r'夜宵|宵夜|半夜').hasMatch(content)) return '23:00';
+    if (RegExp(r'吃药|服药').hasMatch(content)) return '08:00';
     if (RegExp(r'起床').hasMatch(content)) return '07:00';
-    if (RegExp(r'睡觉|休息').hasMatch(content)) return '22:00';
+    if (RegExp(r'睡觉|休息|就寝').hasMatch(content)) return '22:00';
     if (RegExp(r'运动|散步|跑步|锻炼').hasMatch(content)) return '18:30';
     if (RegExp(r'洗漱|洗脸|刷牙').hasMatch(content)) return '07:15';
+    if (RegExp(r'下班').hasMatch(content)) return '18:00';
+    if (RegExp(r'上班|出门').hasMatch(content)) return '08:30';
+    if (RegExp(r'午休|午睡').hasMatch(content)) return '12:30';
+    if (RegExp(r'下午茶|喝茶').hasMatch(content)) return '15:00';
     return null;
+  }
+
+  /// 判断LLM返回的时间是否需要被常识推断覆盖
+  bool _shouldInferTime(String agTime, String agContent) {
+    final parts = agTime.split(':');
+    if (parts.length != 2) return false;
+    final hour = int.tryParse(parts[0]);
+    if (hour == null) return false;
+
+    // 早饭相关内容应该在早上（5-10点）
+    if (RegExp(r'早饭|早餐|早上吃').hasMatch(agContent) && (hour < 5 || hour > 10)) return true;
+    // 午饭相关内容应该在中午（10-14点）
+    if (RegExp(r'午饭|午餐|吃中饭|中午吃').hasMatch(agContent) && (hour < 10 || hour > 14)) return true;
+    // 晚饭相关内容应该在晚上（16-21点）
+    if (RegExp(r'晚饭|晚餐|吃晚饭|晚上吃').hasMatch(agContent) && (hour < 16 || hour > 21)) return true;
+    // 下班相关内容应该在傍晚（16-20点）
+    if (RegExp(r'下班').hasMatch(agContent) && (hour < 16 || hour > 20)) return true;
+    // 睡觉相关内容应该在晚上（19-24点）
+    if (RegExp(r'睡觉|休息|就寝').hasMatch(agContent) && (hour < 19 || hour > 24)) return true;
+    // 起床相关内容应该在早上（4-9点）
+    if (RegExp(r'起床').hasMatch(agContent) && (hour < 4 || hour > 9)) return true;
+    // 运动相关内容应该在傍晚（16-20点）
+    if (RegExp(r'运动|散步|跑步|锻炼').hasMatch(agContent) && (hour < 16 || hour > 20)) return true;
+
+    return false;
   }
 
   String autoDetectIcon(String content) {
@@ -1303,6 +2067,77 @@ class AppStore extends ChangeNotifier {
     if (RegExp(r'睡|休息|午休').hasMatch(content)) return '🛏';
     if (RegExp(r'买|购|超市').hasMatch(content)) return '🛒';
     return '📋';
+  }
+
+  // ===== 晚下班检测与确认 =====
+
+  /// 检测用户当天是否晚下班
+  /// 判断逻辑：用户记录了"下班"相关行为，且实际时间比历史平均下班时间晚超过30分钟
+  /// 返回 LateOffWorkResult，包含是否晚下班、延迟分钟数、受影响的待办事程列表
+  LateOffWorkResult? checkLateOffWork() {
+    final now = DateTime.now();
+    final todayStr = MockData.todayStr;
+    final currentTimeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    // 获取历史平均下班时间
+    final offWorkTimes = _timePatterns['下班'];
+    if (offWorkTimes == null || offWorkTimes.isEmpty) return null;
+
+    final avgTime = _averageTime(offWorkTimes);
+    final avgParts = avgTime.split(':');
+    final avgMinutes = int.parse(avgParts[0]) * 60 + int.parse(avgParts[1]);
+    final currentMinutes = now.hour * 60 + now.minute;
+
+    // 延迟超过30分钟视为晚下班
+    final delayMinutes = currentMinutes - avgMinutes;
+    if (delayMinutes < 30) return null;
+
+    // 查找今天受影响的待办事程（下班后的外出/就餐类事程）
+    final affectedAgendas = _agendaItems.where((a) {
+      if (a.date != todayStr) return false;
+      if (a.status != AgendaStatus.pending) return false;
+      // 事程时间在下班时间之后
+      final aParts = a.time.split(':');
+      if (aParts.length != 2) return false;
+      final aMinutes = int.parse(aParts[0]) * 60 + int.parse(aParts[1]);
+      if (aMinutes < avgMinutes) return false;
+      // 包含外出/就餐关键词
+      return RegExp(r'吃|饭|餐|搓|烤|聚|约|外出|出去|逛街|看电影|散步').hasMatch(a.content);
+    }).toList();
+
+    if (affectedAgendas.isEmpty) return null;
+
+    return LateOffWorkResult(
+      isLate: true,
+      avgOffWorkTime: avgTime,
+      currentTime: currentTimeStr,
+      delayMinutes: delayMinutes,
+      affectedAgendas: affectedAgendas,
+    );
+  }
+
+  /// 确认晚下班后是否仍执行事程
+  /// confirmed=true: 保留事程，更新提醒时间
+  /// confirmed=false: 将事程标记为已放弃
+  void confirmLateOffWorkAgenda(String agendaId, bool confirmed) {
+    final agenda = _agendaItems.where((a) => a.id == agendaId).firstOrNull;
+    if (agenda == null) return;
+
+    if (confirmed) {
+      // 保留事程，更新时间为当前时间+30分钟
+      final now = DateTime.now();
+      final newTime = DateTime(now.year, now.month, now.day, now.hour, now.minute + 30);
+      final newTimeStr = '${newTime.hour.toString().padLeft(2, '0')}:${newTime.minute.toString().padLeft(2, '0')}';
+      _agendaItems = _agendaItems.map((a) =>
+        a.id == agendaId ? a.copyWith(time: newTimeStr, remainingTime: '已推迟到$newTimeStr') : a
+      ).toList();
+    } else {
+      // 标记为已放弃
+      _agendaItems = _agendaItems.map((a) =>
+        a.id == agendaId ? a.copyWith(status: AgendaStatus.skipped, remainingTime: '晚下班已放弃') : a
+      ).toList();
+    }
+    notifyListeners();
   }
 
   // ===== 动态统计计算 =====
@@ -1473,7 +2308,7 @@ class AppStore extends ChangeNotifier {
       case QuestionType.itemLocation:
         return {
           'type': 'itemLocation',
-          'data': _items.map((i) => {'name': i.name, 'location': i.location}).toList(),
+          'data': items.map((i) => {'name': i.name, 'location': i.location}).toList(),
         };
 
       case QuestionType.inventory:
@@ -1530,7 +2365,7 @@ class AppStore extends ChangeNotifier {
       case QuestionType.shopping:
         return {
           'type': 'shopping',
-          'records': _shoppingRecords.map((s) => {
+          'records': shoppingRecords.map((s) => {
                 'date': '${s.time.year}-${s.time.month.toString().padLeft(2, '0')}-${s.time.day.toString().padLeft(2, '0')}',
                 'store': s.store,
                 'items': s.items.map((i) => '${i.name}${i.quantity}${i.unit}').join('、'),
@@ -1730,9 +2565,9 @@ class AppStore extends ChangeNotifier {
     buffer.writeln();
 
     // 物品位置
-    if (_items.isNotEmpty) {
+    if (items.isNotEmpty) {
       buffer.writeln('【物品位置记录】');
-      for (final item in _items) {
+      for (final item in items) {
         final loc = item.location.isNotEmpty ? item.location : '未知';
         buffer.writeln('- ${item.name}：${loc}');
       }
@@ -1794,8 +2629,8 @@ class AppStore extends ChangeNotifier {
     }
 
     // 购买记录（用于消费习惯分析）
-    if (_shoppingRecords.isNotEmpty) {
-      final recent = _shoppingRecords.toList()
+    if (shoppingRecords.isNotEmpty) {
+      final recent = shoppingRecords.toList()
         ..sort((a, b) => b.time.compareTo(a.time));
       buffer.writeln('【购买记录（最近10条）】');
       for (int i = 0; i < recent.length && i < 10; i++) {
@@ -2022,9 +2857,9 @@ $ruleHint
     // 只有"那个东西在哪"、"它在哪"等太模糊的问题
     if ((q.contains('那个') || q.contains('它') || q.contains('那个东西')) &&
         (q.contains('在哪') || q.contains('哪里') || q.contains('放哪'))) {
-      final items = _items.map((e) => e.name).toList();
-      if (items.length >= 2) {
-        return '您是想问${items.take(2).join('还是')}的位置？';
+      final itemNames = items.map((e) => e.name).toList();
+      if (itemNames.length >= 2) {
+        return '您是想问${itemNames.take(2).join('还是')}的位置？';
       }
     }
 
@@ -2677,7 +3512,7 @@ $ruleHint
       return null;
     }
     // 从物品列表中查找
-    for (final item in _items) {
+    for (final item in items) {
       if (q.contains(item.name)) {
         return '根据您的记录，${item.name}放在了${item.location}。\n'
             '${item.history.length > 1 ? "历史位置：" + item.history.map((h) => h.location).join("→") : ""}';
@@ -3395,10 +4230,10 @@ $ruleHint
         !q.contains('菜') && !q.contains('商店')) {
       return null;
     }
-    if (_shoppingRecords.isEmpty) return '没有购物记录。';
+    if (shoppingRecords.isEmpty) return '没有购物记录。';
 
     return '最近的购物记录：\n'
-        '${_shoppingRecords.take(3).map((r) => '${r.time.month}/${r.time.day} 在${r.store}买了${r.items.map((i) => '${i.name}${i.quantity}${i.unit}').join("、")}').join('\n')}';
+        '${shoppingRecords.take(3).map((r) => '${r.time.month}/${r.time.day} 在${r.store}买了${r.items.map((i) => '${i.name}${i.quantity}${i.unit}').join("、")}').join('\n')}';
   }
 
   /// 常识性问题回答

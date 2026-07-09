@@ -4,6 +4,12 @@ enum TimelineType { behavior, item, shopping, event }
 
 enum AgendaStatus { pending, completed, skipped, postponed, expired }
 
+class Range {
+  final int start;
+  final int end;
+  const Range(this.start, this.end);
+}
+
 enum AgendaLevel { normal, important, mustDo }
 
 enum NoteType { voice, text }
@@ -11,6 +17,8 @@ enum NoteType { voice, text }
 enum AgendaSource { user, ai }
 
 enum TimeSource { userSpecified, history, commonSense, current }
+
+enum AgendaCategory { dailyMustDo, frequent, temporary, custom }
 
 class TagDef {
   final String id;
@@ -28,10 +36,10 @@ class TagDef {
   });
 
   static const List<TagDef> systemTags = [
-    TagDef(id: 'behavior', name: '行为', color: 'accent', icon: '📊', system: true),
-    TagDef(id: 'item', name: '物品', color: 'info', icon: '📦', system: true),
-    TagDef(id: 'shopping', name: '购物', color: 'warning', icon: '🛒', system: true),
-    TagDef(id: 'event', name: '事件', color: 'success', icon: '📍', system: true),
+    TagDef(id: 'behavior', name: '行为活动', color: 'accent', icon: 'activity', system: true),
+    TagDef(id: 'item', name: '物品位置', color: 'info', icon: 'package', system: true),
+    TagDef(id: 'shopping', name: '购物记录', color: 'warning', icon: 'shopping_cart', system: true),
+    TagDef(id: 'event', name: '日常事件', color: 'success', icon: 'map_pin', system: true),
   ];
 }
 
@@ -49,12 +57,26 @@ class NoteEntry {
   });
 }
 
+/// 意图识别后的结构化数据（用于详情页展示）
+class IntentData {
+  final String intentType; // behavior/shopping/item_location/agenda_create/inventory_consume
+  final String displayName; // 展示名称
+  final Map<String, dynamic> slots; // 槽值
+
+  const IntentData({
+    required this.intentType,
+    required this.displayName,
+    this.slots = const {},
+  });
+}
+
 class SideEffects {
   final ShoppingRecord? shoppingRecord;
   final ItemUpdate? itemUpdate;
   final String? agenda;
   final List<String>? agendaList;
   final InventoryUpdate? inventoryUpdate;
+  final IntentData? intentData; // 意图识别结构化数据
 
   const SideEffects({
     this.shoppingRecord,
@@ -62,7 +84,26 @@ class SideEffects {
     this.agenda,
     this.agendaList,
     this.inventoryUpdate,
+    this.intentData,
   });
+
+  SideEffects copyWith({
+    ShoppingRecord? shoppingRecord,
+    ItemUpdate? itemUpdate,
+    String? agenda,
+    List<String>? agendaList,
+    InventoryUpdate? inventoryUpdate,
+    IntentData? intentData,
+  }) {
+    return SideEffects(
+      shoppingRecord: shoppingRecord ?? this.shoppingRecord,
+      itemUpdate: itemUpdate ?? this.itemUpdate,
+      agenda: agenda ?? this.agenda,
+      agendaList: agendaList ?? this.agendaList,
+      inventoryUpdate: inventoryUpdate ?? this.inventoryUpdate,
+      intentData: intentData ?? this.intentData,
+    );
+  }
 }
 
 class ShoppingItem {
@@ -110,6 +151,7 @@ class TimelineRecord {
   final TimelineType type;
   final List<String> tags;
   final String? matchedAgenda;
+  final String? linkedAgendaId;
   final List<NoteEntry> notes;
   final SideEffects? sideEffects;
   final bool deleted;
@@ -128,6 +170,7 @@ class TimelineRecord {
     this.type = TimelineType.behavior,
     this.tags = const ['behavior'],
     this.matchedAgenda,
+    this.linkedAgendaId,
     this.notes = const [],
     this.sideEffects,
     this.deleted = false,
@@ -140,6 +183,7 @@ class TimelineRecord {
     TimelineType? type,
     List<String>? tags,
     String? matchedAgenda,
+    String? linkedAgendaId,
     List<NoteEntry>? notes,
     SideEffects? sideEffects,
     bool? deleted,
@@ -151,6 +195,7 @@ class TimelineRecord {
       type: type ?? this.type,
       tags: tags ?? this.tags,
       matchedAgenda: matchedAgenda ?? this.matchedAgenda,
+      linkedAgendaId: linkedAgendaId ?? this.linkedAgendaId,
       notes: notes ?? this.notes,
       sideEffects: sideEffects ?? this.sideEffects,
       deleted: deleted ?? this.deleted,
@@ -174,6 +219,7 @@ class AgendaItem {
   final String? matchedTimeline;
   final String? note;
   final String? remainingTime;
+  final AgendaCategory category;
 
   const AgendaItem({
     required this.id,
@@ -191,6 +237,7 @@ class AgendaItem {
     this.matchedTimeline,
     this.note,
     this.remainingTime,
+    this.category = AgendaCategory.custom,
   });
 
   AgendaItem copyWith({
@@ -209,6 +256,7 @@ class AgendaItem {
     String? matchedTimeline,
     String? note,
     String? remainingTime,
+    AgendaCategory? category,
   }) {
     return AgendaItem(
       id: id ?? this.id,
@@ -226,6 +274,7 @@ class AgendaItem {
       matchedTimeline: matchedTimeline ?? this.matchedTimeline,
       note: note ?? this.note,
       remainingTime: remainingTime ?? this.remainingTime,
+      category: category ?? this.category,
     );
   }
 }
@@ -254,6 +303,7 @@ class PendingAgendaItem {
   final String id;
   final String content;
   final String suggestedTime;
+  final String suggestedDate;
   final TimeSource timeSource;
   final List<String>? keywords;
 
@@ -261,6 +311,7 @@ class PendingAgendaItem {
     required this.id,
     required this.content,
     required this.suggestedTime,
+    required this.suggestedDate,
     this.timeSource = TimeSource.current,
     this.keywords,
   });
@@ -559,4 +610,21 @@ class ConversationContext {
 
   bool get isActive => lastUpdated != null &&
       DateTime.now().difference(lastUpdated!).inMinutes < 5;
+}
+
+/// 晚下班检测结果
+class LateOffWorkResult {
+  final bool isLate;
+  final String avgOffWorkTime;  // 历史平均下班时间 HH:MM
+  final String currentTime;     // 当前时间 HH:MM
+  final int delayMinutes;       // 延迟分钟数
+  final List<AgendaItem> affectedAgendas; // 受影响的待办事程
+
+  const LateOffWorkResult({
+    required this.isLate,
+    required this.avgOffWorkTime,
+    required this.currentTime,
+    required this.delayMinutes,
+    required this.affectedAgendas,
+  });
 }

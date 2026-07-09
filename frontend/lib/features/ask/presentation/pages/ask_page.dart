@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/route_names.dart';
 
 import '../../../../core/mock/mock_data.dart';
 import '../../../../core/models/app_models.dart';
@@ -88,19 +89,17 @@ class _AskPageState extends State<AskPage> {
     _lastQuestion = text.trim();
     _errorMsg = null;
 
-    // 先检查是否是确认/取消关键词
+    // 先检查是否是确认/取消关键词（只有在有待确认项时才触发）
     final confirmKeywords = ['好', '好的', '是的', '是', '添加', '确认', '可以', '没问题', '行'];
     final rejectKeywords = ['不', '不用', '算了', '不要', '暂不'];
 
-    if (confirmKeywords.any((kw) => text.contains(kw)) || rejectKeywords.any((kw) => text.contains(kw))) {
+    // 只有在有待确认的计划时，才检查确认关键词
+    final hasPendingPlan = store.pendingAgendaConfirm.isNotEmpty;
+    
+    if (hasPendingPlan && 
+        (confirmKeywords.any((kw) => text.contains(kw)) || rejectKeywords.any((kw) => text.contains(kw)))) {
       final isConfirm = confirmKeywords.any((kw) => text.contains(kw));
-      final habitResult = store.confirmAddHabit(isConfirm);
-      String reply;
-      if (!habitResult.contains('没有待确认的习惯计划')) {
-        reply = habitResult;
-      } else {
-        reply = store.confirmAddPlan(isConfirm);
-      }
+      final reply = store.confirmAddPlan(isConfirm);
       store.addChatMessage(ChatMessage(
         id: 'a_${DateTime.now().millisecondsSinceEpoch}',
         role: 'assistant',
@@ -147,6 +146,7 @@ class _AskPageState extends State<AskPage> {
       },
       onError: (error) {
         if (!mounted) return;
+        final hasLlm = store.llmEnabled;
         setState(() {
           _errorMsg = error.toString();
           _isGenerating = false;
@@ -159,6 +159,10 @@ class _AskPageState extends State<AskPage> {
           time: DateTime.now(),
         ));
         _scrollToBottom();
+        // LLM 调用失败时弹出提示
+        if (hasLlm) {
+          _showLlmErrorDialog(error.toString());
+        }
       },
       onDone: () {
         if (!mounted) return;
@@ -172,11 +176,16 @@ class _AskPageState extends State<AskPage> {
             time: DateTime.now(),
           ));
         }
+        final hasLlm = store.llmEnabled;
         setState(() {
           _isGenerating = false;
           _streamingMessageId = null;
         });
         _scrollToBottom();
+        // LLM 调用成功时显示轻量提示
+        if (hasLlm) {
+          _showLlmSuccessTip();
+        }
       },
     );
   }
@@ -230,6 +239,91 @@ class _AskPageState extends State<AskPage> {
         );
       }
     });
+  }
+
+  void _showLlmErrorDialog(String error) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.error_outline, color: AppColors.danger, size: 24),
+            SizedBox(width: 8),
+            Text('AI 回答失败', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '大模型调用失败，已为您切换到本地规则回答。',
+              style: TextStyle(fontSize: 14, color: AppColors.textSecondary, height: 1.5),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.dangerLight.withOpacity(0.5),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                error.length > 100 ? '${error.substring(0, 100)}...' : error,
+                style: const TextStyle(fontSize: 12, color: AppColors.danger),
+              ),
+            ),
+          ],
+        ),
+        actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Navigator.pushNamed(context, RouteNames.aiSettings);
+            },
+            child: const Text('检查设置', style: TextStyle(fontSize: 14, color: AppColors.accent)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('知道了', style: TextStyle(fontSize: 14, color: AppColors.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _retryLast();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            ),
+            child: const Text('重试', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showLlmSuccessTip() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: const [
+            Icon(Icons.check_circle, color: AppColors.accent, size: 18),
+            SizedBox(width: 8),
+            Text('AI 智能回答完成', style: TextStyle(fontSize: 13, color: AppColors.textPrimary)),
+          ],
+        ),
+        backgroundColor: AppColors.bgSecondary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 2),
+        margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+      ),
+    );
   }
 
   @override

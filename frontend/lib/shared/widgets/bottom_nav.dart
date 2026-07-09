@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/app_icons.dart';
 import '../../core/state/app_store.dart';
 
 /// 底部导航栏 - 对齐 BottomNav.tsx
@@ -22,29 +23,29 @@ class BottomNav extends StatelessWidget {
         child: Row(
           children: [
             _NavItem(
-              icon: Icons.home_outlined,
-              activeIcon: Icons.home,
+              icon: AppIcons.home,
+              activeIcon: AppIcons.home,
               label: '首页',
               isActive: store.activeTab == 'home',
               onTap: () => store.setActiveTab('home'),
             ),
             _NavItem(
-              icon: Icons.chat_bubble_outline,
-              activeIcon: Icons.chat_bubble,
+              icon: AppIcons.messageCircle,
+              activeIcon: AppIcons.messageCircle,
               label: '问一问',
               isActive: store.activeTab == 'ask',
               onTap: () => store.setActiveTab('ask'),
             ),
             _NavItem(
-              icon: Icons.trending_up,
-              activeIcon: Icons.trending_up,
+              icon: AppIcons.trendingUp,
+              activeIcon: AppIcons.trendingUp,
               label: '习惯',
               isActive: store.activeTab == 'habits',
               onTap: () => store.setActiveTab('habits'),
             ),
             _NavItem(
-              icon: Icons.person_outline,
-              activeIcon: Icons.person,
+              icon: AppIcons.user,
+              activeIcon: AppIcons.user,
               label: '我的',
               isActive: store.activeTab == 'profile',
               onTap: () => store.setActiveTab('profile'),

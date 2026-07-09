@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/intl.dart';
 import 'core/constants/route_names.dart';
 import 'layouts/main_layout.dart';
 import 'shared/themes/app_theme.dart';
@@ -23,16 +25,28 @@ import 'features/analytics/presentation/pages/behavior_analysis_page.dart';
 import 'features/ask/presentation/pages/chat_history_page.dart';
 import 'features/profile/presentation/pages/ai_settings_page.dart';
 import 'features/tags/presentation/pages/tag_management_page.dart';
+import 'features/profile/presentation/pages/intent_training_page.dart';
 
 class DailyAwarenessApp extends StatelessWidget {
   const DailyAwarenessApp({super.key});
 
   @override
   Widget build(BuildContext context) {
+    Intl.defaultLocale = 'zh_CN';
     return MaterialApp(
       title: '日常意识助手',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
+      locale: const Locale('zh', 'CN'),
+      supportedLocales: const [
+        Locale('zh', 'CN'),
+        Locale('en', 'US'),
+      ],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       home: const MainLayout(),
       routes: {
         RouteNames.agendaDetail: (ctx) => const AgendaDetailPage(),
@@ -56,6 +70,7 @@ class DailyAwarenessApp extends StatelessWidget {
         RouteNames.chatHistory: (ctx) => const ChatHistoryPage(),
         RouteNames.aiSettings: (ctx) => const AiSettingsPage(),
         RouteNames.tagManagement: (ctx) => const TagManagementPage(),
+        RouteNames.intentTraining: (ctx) => const IntentTrainingPage(),
       },
     );
   }
