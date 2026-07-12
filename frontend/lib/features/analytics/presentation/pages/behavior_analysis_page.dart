@@ -80,7 +80,7 @@ class BehaviorAnalysisPage extends StatelessWidget {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF5BAE94), AppColors.info],
+          colors: [AppColors.voiceStart, AppColors.info],
         ),
         borderRadius: BorderRadius.circular(14),
       ),

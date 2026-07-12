@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../layouts/secondary_layout.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_icons.dart';
 import '../../../../core/state/app_store.dart';
 import '../../../../core/models/app_models.dart';
 
@@ -20,6 +21,10 @@ class TagManagementPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final customTags = context.select<AppStore, List<TagDef>>((s) => s.customTags);
+    final store = context.read<AppStore>();
+    // 按使用次数降序排序
+    final sortedCustomTags = [...customTags]..sort((a, b) =>
+        store.getTagUsageCount(b.id).compareTo(store.getTagUsageCount(a.id)));
     return SecondaryScaffold(
       title: '标签管理',
       actions: [
@@ -39,13 +44,17 @@ class TagManagementPage extends StatelessWidget {
           const SizedBox(height: 16),
           _buildSectionTitle('我的标签'),
           const SizedBox(height: 8),
-          if (customTags.isEmpty)
+          if (sortedCustomTags.isEmpty)
             _buildEmpty()
           else
-            ...customTags.map((t) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _buildCustomTagItem(context, t),
-                )),
+            ...sortedCustomTags.asMap().entries.map((entry) {
+              final idx = entry.key;
+              final tag = entry.value;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _buildCustomTagItem(context, tag, idx + 1),
+              );
+            }),
           const SizedBox(height: 24),
         ],
       ),
@@ -100,7 +109,7 @@ class TagManagementPage extends StatelessWidget {
                 height: 28,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(color: colorSet.bg, borderRadius: BorderRadius.circular(6)),
-                child: Text(t.icon, style: const TextStyle(fontSize: 14)),
+                child: _buildTagIcon(t, size: 16),
               ),
               const SizedBox(width: 8),
               Column(
@@ -144,31 +153,56 @@ class TagManagementPage extends StatelessWidget {
     );
   }
 
-  Widget _buildCustomTagItem(BuildContext context, TagDef tag) {
+  Widget _buildCustomTagItem(BuildContext context, TagDef tag, int rank) {
     final colorSet = AppColors.tagColors[tag.color] ?? AppColors.tagColors['gray']!;
     final usage = context.read<AppStore>().getTagUsageCount(tag.id);
+    final showRankBadge = rank <= 3;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: AppColors.bgSecondary,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(
+          color: showRankBadge ? colorSet.color.withOpacity(0.3) : AppColors.border,
+          width: showRankBadge ? 1.5 : 0.5,
+        ),
       ),
       child: Row(
         children: [
+          // 排名徽章
+          if (showRankBadge)
+            Container(
+              width: 24,
+              height: 24,
+              margin: const EdgeInsets.only(right: 10),
+              decoration: BoxDecoration(
+                color: rank == 1 ? const Color(0xFFFFD700)
+                     : rank == 2 ? const Color(0xFFC0C0C0)
+                     : const Color(0xFFCD7F32),
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: Text('$rank', style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          // 图标方块（更大更醒目）
           Container(
-            width: 36,
-            height: 36,
+            width: 40,
+            height: 40,
             alignment: Alignment.center,
-            decoration: BoxDecoration(color: colorSet.bg, borderRadius: BorderRadius.circular(8)),
-            child: Text(tag.icon, style: const TextStyle(fontSize: 18)),
+            decoration: BoxDecoration(
+              color: colorSet.bg,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: colorSet.color.withOpacity(0.3), width: 1),
+            ),
+            child: _buildTagIcon(tag, size: 20),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(tag.name, style: const TextStyle(fontSize: 14, color: AppColors.textPrimary, fontWeight: FontWeight.w500)),
+                Text(tag.name, style: const TextStyle(fontSize: 14, color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
                 Text('使用 $usage 次', style: const TextStyle(fontSize: 11, color: AppColors.textTertiary)),
               ],
@@ -357,5 +391,47 @@ class TagManagementPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _buildTagIcon(TagDef tag, {double size = 16}) {
+    if (tag.icon.isEmpty || tag.icon == '#') {
+      return Icon(Icons.label_outline, size: size, color: AppColors.textSecondary);
+    }
+    // emoji 图标（包含非ASCII字符的视为emoji）
+    if (tag.icon.runes.any((r) => r > 127)) {
+      return Text(tag.icon, style: TextStyle(fontSize: size));
+    }
+    // Lucide 图标名称映射
+    final iconMap = <String, IconData>{
+      'activity': AppIcons.activity,
+      'package': AppIcons.package,
+      'shopping_cart': AppIcons.shoppingCart,
+      'map_pin': AppIcons.mapPin,
+      'tag': AppIcons.tag,
+      'hash': AppIcons.hash,
+      'star': AppIcons.star,
+      'target': AppIcons.target,
+      'heart': AppIcons.heart,
+      'book': AppIcons.book,
+      'droplet': AppIcons.droplet,
+      'sun': AppIcons.sun,
+      'moon': AppIcons.moon,
+      'clock': AppIcons.clock,
+      'bell': AppIcons.bell,
+      'calendar': AppIcons.calendar,
+      'search': AppIcons.search,
+      'settings': AppIcons.settings,
+      'user': AppIcons.user,
+      'home': AppIcons.home,
+      'message_circle': AppIcons.messageCircle,
+      'trending_up': AppIcons.trendingUp,
+      'sparkles': AppIcons.sparkles,
+    };
+    final iconData = iconMap[tag.icon];
+    if (iconData != null) {
+      return Icon(iconData, size: size, color: AppColors.textSecondary);
+    }
+    // 未知图标显示 #
+    return Icon(Icons.label_outline, size: size, color: AppColors.textSecondary);
   }
 }

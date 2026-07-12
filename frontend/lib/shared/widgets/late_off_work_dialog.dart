@@ -171,7 +171,10 @@ class _LateOffWorkDialogState extends State<LateOffWorkDialog> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(agenda.content, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                Text(agenda.content,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
                 const SizedBox(height: 2),
                 Row(
                   children: [

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'llm_service.dart';
@@ -273,7 +274,8 @@ class IntentRecognitionService {
         _patterns = list
             .map((e) => UserPattern.fromJson(e as Map<String, dynamic>))
             .toList();
-      } catch (_) {
+      } catch (e) {
+        debugPrint('意图模式加载失败: $e');
         _patterns = [];
       }
     }
@@ -345,13 +347,15 @@ class IntentRecognitionService {
       }
     }
 
-    if (bestMatch != null && bestScore >= 0.8) {
+    if (bestMatch != null && bestScore >= 0.7) {
       final extractedSlots = bestMatch.slots.map((slot) {
         final newIntents = slot.intents.map((intent) {
+          // 模糊匹配时提高置信度，避免 confidence * score 导致阈值无法通过
+          final adjustedConfidence = (intent.confidence * 0.5 + bestScore * 0.5).clamp(0.0, 1.0);
           return IntentItem(
             type: intent.type,
             slots: _extractSlotsFromSimilar(text, intent),
-            confidence: intent.confidence * bestScore,
+            confidence: adjustedConfidence,
           );
         }).toList();
         return TimelineSlot(time: slot.time, intents: newIntents);
@@ -459,7 +463,7 @@ class IntentRecognitionService {
 
 ## 槽值提取规则：
 - **item_location**: 提取 item_name(物品名), location(位置)
-- **shopping**: 提取 store(商店), items_text(商品文本)
+- **shopping**: 提取 store(商店名，去掉"去"、"刚去"、"到"等前缀动词), items(商品数组，每个包含name/quantity/unit), items_text(商品文本摘要)
 - **agenda_create**: 提取 content(事程内容), is_must_do(是否必做，布尔), date_offset(日期偏移天数，今天=0，明天=1，后天=2，大后天=3，没有则0)
 - **agenda_complete**: 提取 keyword(完成的事程关键词)
 - **inventory_consume**: 提取 item_name(物品名), quantity(数量), unit(单位)
@@ -470,7 +474,9 @@ class IntentRecognitionService {
 - "准备"、"一会"、"待会儿"、"等一下"表示未来计划 → agenda_create
 - "完了"、"过了"、"好了"表示已完成 → agenda_complete
 - 位置名去掉"中"、"里"、"上"、"下"、"内"等方位词
+- 商店名去掉"去"、"刚去"、"到"、"去了"等前缀动词，只保留场所名称
 - 时间格式统一为 HH:MM
+- 购物记录中的商品数量和单位必须精确提取，不能默认1个
 
 ## 用户输入：$text
 
@@ -485,9 +491,16 @@ class IntentRecognitionService {
       ]
     },
     {
-      "time": "09:30",
+      "time": "15:00",
       "intents": [
-        {"intent": "inventory_consume", "slots": {"item_name": "饭后药", "quantity": 2, "unit": "片"}, "confidence": 0.95}
+        {"intent": "shopping", "slots": {
+          "store": "超市",
+          "items": [
+            {"name": "苹果", "quantity": 8, "unit": "个"},
+            {"name": "梨", "quantity": 6, "unit": "个"}
+          ],
+          "items_text": "8个苹果、6个梨"
+        }, "confidence": 0.95}
       ]
     }
   ],
@@ -506,14 +519,12 @@ class IntentRecognitionService {
       });
 
       final uri = Uri.parse('${_llm.config.baseUrl}/chat/completions');
-      final response = await http.post(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${_llm.config.apiKey}',
-        },
-        body: body,
-      );
+      final response = await http
+          .post(uri, headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${_llm.config.apiKey}',
+          }, body: body)
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
@@ -530,7 +541,9 @@ class IntentRecognitionService {
           });
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('LLM 意图识别请求失败: $e');
+    }
 
     return _ruleBasedRecognize(text);
   }
@@ -756,14 +769,52 @@ class IntentRecognitionService {
     }
 
     // 购物
-    final buyMatch = RegExp(r'在?(.+?)买了(.+)').firstMatch(clause);
+    final buyMatch = RegExp(r'(?:刚去|去|到|在)?(.+?)(?:买了|买)(.+)').firstMatch(clause);
     if (buyMatch != null) {
+      var store = buyMatch.group(1)!.trim();
+      store = store
+          .replaceAll(RegExp(r'^(刚去|去|到|在)'), '')
+          .trim();
+      final itemsText = buyMatch.group(2)!.trim();
+      
+      // 解析商品列表：数量+单位+名称 或 名称+数量+单位
+      final items = <Map<String, dynamic>>[];
+      final itemMatches = RegExp(
+        r'(\d+(?:\.\d+)?)\s*(片|粒|盒|瓶|个|包|袋|支|颗|毫升|克|斤|公斤|箱|条|把)\s*([\u4e00-\u9fa5A-Za-z]{2,10})'
+      ).allMatches(itemsText);
+      for (final m in itemMatches) {
+        items.add({
+          'name': m.group(3)!,
+          'quantity': double.parse(m.group(1)!),
+          'unit': m.group(2)!,
+        });
+      }
+      
+      // 另一种格式：名称+数量+单位
+      if (items.isEmpty) {
+        final itemMatches2 = RegExp(
+          r'([\u4e00-\u9fa5A-Za-z]{2,10})\s*(\d+(?:\.\d+)?)\s*(片|粒|盒|瓶|个|包|袋|支|颗|毫升|克|斤|公斤|箱|条|把)'
+        ).allMatches(itemsText);
+        for (final m in itemMatches2) {
+          items.add({
+            'name': m.group(1)!,
+            'quantity': double.parse(m.group(2)!),
+            'unit': m.group(3)!,
+          });
+        }
+      }
+      
+      final slots = <String, dynamic>{
+        'store': store,
+        'items_text': itemsText,
+      };
+      if (items.isNotEmpty) {
+        slots['items'] = items;
+      }
+      
       intents.add(IntentItem(
         type: IntentType.shopping,
-        slots: {
-          'store': buyMatch.group(1)!.trim(),
-          'items_text': buyMatch.group(2)!.trim(),
-        },
+        slots: slots,
         confidence: 0.8,
       ));
     }
@@ -786,8 +837,8 @@ class IntentRecognitionService {
     }
 
     // 事程完成
-    final completedKeywords = ['正在', '刚', '刚刚', '已经', '过了', '完了', '吃完了', '喝完了', '吃过了', '做完了'];
-    final pastSuffixes = ['完了', '过了', '好了', '完', '过'];
+    final completedKeywords = ['刚', '刚刚', '已经', '过了', '完了', '吃完了', '喝完了', '吃过了', '做完了'];
+    final pastSuffixes = ['完了', '过了', '好了'];
     bool isCompleted = completedKeywords.any((kw) => clause.contains(kw)) ||
         pastSuffixes.any((kw) => clause.endsWith(kw));
     if (isCompleted && intents.isEmpty) {
@@ -800,13 +851,18 @@ class IntentRecognitionService {
 
     // 库存消耗
     final consumeMatches = RegExp(
-      r'(?:吃了|吃|喝了|喝|用了|用|服用|服)([\u4e00-\u9fa5A-Za-z]{1,10}?)(\d+(?:\.\d+)?)?\s*(片|粒|盒|瓶|个|包|袋|支|颗|毫升|克)?',
+      r'(?:吃了|吃|喝了|喝|用了|用|服用|服)\s*([\u4e00-\u9fa5A-Za-z]{2,10})(?:\s+(\d+(?:\.\d+)?)\s*(片|粒|盒|瓶|个|包|袋|支|颗|毫升|克))?',
     ).allMatches(clause);
     for (final consumeMatch in consumeMatches) {
+      var itemName = consumeMatch.group(1)!.trim();
+      itemName = itemName
+          .replaceAll(RegExp(r'^(完|过|了|刚|刚刚)'), '')
+          .replaceAll(RegExp(r'(完|过|了)$'), '');
+      if (itemName.isEmpty) continue;
       intents.add(IntentItem(
         type: IntentType.inventoryConsume,
         slots: {
-          'item_name': consumeMatch.group(1)!.trim(),
+          'item_name': itemName,
           'quantity': double.tryParse(consumeMatch.group(2) ?? '1') ?? 1.0,
           'unit': consumeMatch.group(3) ?? '个',
         },

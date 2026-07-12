@@ -26,6 +26,9 @@ class StorageService {
   static const _kQuietHours = 'quiet_hours';
   static const _kInitialized = 'initialized';
   static const _kQuestionFrequency = 'question_frequency';
+  static const _kTimePatterns = 'time_patterns';
+  static const _kPendingAgenda = 'pending_agenda';
+  static const _kDisabledHighFreq = 'disabled_high_freq';
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
@@ -56,9 +59,17 @@ class StorageService {
     if (str == null) return MockData.mockTimelineRecords;
     try {
       final list = jsonDecode(str) as List;
-      return list.map((j) => _timelineFromJson(j as Map<String, dynamic>)).toList();
+      final results = <TimelineRecord>[];
+      for (final j in list) {
+        try {
+          results.add(_timelineFromJson(j as Map<String, dynamic>));
+        } catch (_) {
+          // 跳过损坏的单条记录，保留其余
+        }
+      }
+      return results;
     } catch (_) {
-      return MockData.mockTimelineRecords;
+      return [];
     }
   }
 
@@ -73,9 +84,17 @@ class StorageService {
     if (str == null) return MockData.mockAgendaItems;
     try {
       final list = jsonDecode(str) as List;
-      return list.map((j) => _agendaFromJson(j as Map<String, dynamic>)).toList();
+      final results = <AgendaItem>[];
+      for (final j in list) {
+        try {
+          results.add(_agendaFromJson(j as Map<String, dynamic>));
+        } catch (_) {
+          // 跳过损坏的单条记录
+        }
+      }
+      return results;
     } catch (_) {
-      return MockData.mockAgendaItems;
+      return [];
     }
   }
 
@@ -90,9 +109,15 @@ class StorageService {
     if (str == null) return MockData.mockShoppingRecords;
     try {
       final list = jsonDecode(str) as List;
-      return list.map((j) => _shoppingFromJson(j as Map<String, dynamic>)).toList();
+      final results = <ShoppingRecord>[];
+      for (final j in list) {
+        try {
+          results.add(_shoppingFromJson(j as Map<String, dynamic>));
+        } catch (_) {}
+      }
+      return results;
     } catch (_) {
-      return MockData.mockShoppingRecords;
+      return [];
     }
   }
 
@@ -107,9 +132,15 @@ class StorageService {
     if (str == null) return MockData.mockItems;
     try {
       final list = jsonDecode(str) as List;
-      return list.map((j) => _itemFromJson(j as Map<String, dynamic>)).toList();
+      final results = <ItemRecord>[];
+      for (final j in list) {
+        try {
+          results.add(_itemFromJson(j as Map<String, dynamic>));
+        } catch (_) {}
+      }
+      return results;
     } catch (_) {
-      return MockData.mockItems;
+      return [];
     }
   }
 
@@ -124,9 +155,15 @@ class StorageService {
     if (str == null) return MockData.mockInventory;
     try {
       final list = jsonDecode(str) as List;
-      return list.map((j) => _inventoryFromJson(j as Map<String, dynamic>)).toList();
+      final results = <InventoryItem>[];
+      for (final j in list) {
+        try {
+          results.add(_inventoryFromJson(j as Map<String, dynamic>));
+        } catch (_) {}
+      }
+      return results;
     } catch (_) {
-      return MockData.mockInventory;
+      return [];
     }
   }
 
@@ -141,9 +178,15 @@ class StorageService {
     if (str == null) return MockData.mockCustomTags;
     try {
       final list = jsonDecode(str) as List;
-      return list.map((j) => _tagFromJson(j as Map<String, dynamic>)).toList();
+      final results = <TagDef>[];
+      for (final j in list) {
+        try {
+          results.add(_tagFromJson(j as Map<String, dynamic>));
+        } catch (_) {}
+      }
+      return results;
     } catch (_) {
-      return MockData.mockCustomTags;
+      return [];
     }
   }
 
@@ -158,9 +201,15 @@ class StorageService {
     if (str == null) return MockData.mockChatMessages;
     try {
       final list = jsonDecode(str) as List;
-      return list.map((j) => _chatMessageFromJson(j as Map<String, dynamic>)).toList();
+      final results = <ChatMessage>[];
+      for (final j in list) {
+        try {
+          results.add(_chatMessageFromJson(j as Map<String, dynamic>));
+        } catch (_) {}
+      }
+      return results;
     } catch (_) {
-      return MockData.mockChatMessages;
+      return [];
     }
   }
 
@@ -188,6 +237,9 @@ class StorageService {
     }
   }
 
+  // 注：UserProfile 为单对象，解析失败时返回 Mock 是安全的（不会覆盖，
+  // 因为下次保存时会写入正确的数据）。列表类型则改为返回空列表。
+
   /// 保存提醒规则
   Future<void> saveReminderRules(Map<String, dynamic> rules) async {
     await prefs.setString(_kReminderRules, jsonEncode(rules));
@@ -205,9 +257,34 @@ class StorageService {
 
   Map<String, dynamic> _defaultReminderRules() {
     return {
-      'normal': {'advanceMinutes': 10, 'repeatCount': 1, 'enabled': true},
-      'important': {'advanceMinutes': 30, 'repeatCount': 3, 'enabled': true},
-      'mustDo': {'advanceMinutes': 30, 'repeatCount': 5, 'enabled': true},
+      'normal': {'advanceMinutes': 10, 'repeatCount': 1, 'repeatInterval': 5, 'allowPostpone': true, 'allowSkip': true, 'enabled': true, 'streakUpgradeDays': 7, 'failDemotionThreshold': 3, 'timeDeviationMinutes': 30},
+      'important': {'advanceMinutes': 30, 'repeatCount': 3, 'repeatInterval': 5, 'allowPostpone': true, 'allowSkip': true, 'enabled': true, 'streakUpgradeDays': 7, 'failDemotionThreshold': 3, 'timeDeviationMinutes': 30},
+      'mustDoShort': {
+        'advanceMinutes': 30,
+        'repeatCount': 5,
+        'repeatInterval': 2,
+        'allowPostpone': false,
+        'allowSkip': false,
+        'enabled': true,
+        'stagesEnabled': true,
+        'stages': [-30, -10, 0, 10],
+        'streakUpgradeDays': 7,
+        'failDemotionThreshold': 3,
+        'timeDeviationMinutes': 30,
+      },
+      'mustDoLong': {
+        'advanceMinutes': 60,
+        'repeatCount': 3,
+        'repeatInterval': 10,
+        'allowPostpone': true,
+        'allowSkip': false,
+        'enabled': true,
+        'stagesEnabled': true,
+        'stages': [-60, -30, 0, 30],
+        'streakUpgradeDays': 7,
+        'failDemotionThreshold': 3,
+        'timeDeviationMinutes': 30,
+      },
     };
   }
 
@@ -256,6 +333,75 @@ class StorageService {
     await prefs.remove(_kReminderRules);
     await prefs.remove(_kQuietHours);
     await prefs.remove(_kInitialized);
+    await prefs.remove(_kTimePatterns);
+    await prefs.remove(_kPendingAgenda);
+    await prefs.remove(_kDisabledHighFreq);
+  }
+
+  /// 保存时间模式（用于晚下班检测等）
+  Future<void> saveTimePatterns(Map<String, List<String>> patterns) async {
+    final jsonMap = patterns.map((k, v) => MapEntry(k, v));
+    await prefs.setString(_kTimePatterns, jsonEncode(jsonMap));
+  }
+
+  Map<String, List<String>> loadTimePatterns() {
+    final str = prefs.getString(_kTimePatterns);
+    if (str == null) return {};
+    try {
+      final decoded = jsonDecode(str) as Map<String, dynamic>;
+      return decoded.map((k, v) =>
+          MapEntry(k, List<String>.from(v as List)));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// 保存待确认事程
+  Future<void> savePendingAgenda(List<dynamic> items) async {
+    final jsonList = items.map((item) {
+      if (item is PendingAgendaItem) {
+        return {
+          'id': item.id,
+          'content': item.content,
+          'suggestedTime': item.suggestedTime,
+          'suggestedDate': item.suggestedDate,
+          'timeSource': item.timeSource.name,
+          'keywords': item.keywords,
+        };
+      }
+      return item;
+    }).toList();
+    await prefs.setString(_kPendingAgenda, jsonEncode(jsonList));
+  }
+
+  List<dynamic> loadPendingAgenda() {
+    final str = prefs.getString(_kPendingAgenda);
+    if (str == null) return [];
+    try {
+      final list = jsonDecode(str) as List;
+      return list.map((j) => PendingAgendaItem(
+        id: j['id'] ?? '',
+        content: j['content'] ?? '',
+        suggestedTime: j['suggestedTime'] ?? '',
+        suggestedDate: j['suggestedDate'] ?? '',
+        timeSource: TimeSource.values.firstWhere(
+          (t) => t.name == j['timeSource'],
+          orElse: () => TimeSource.current,
+        ),
+        keywords: j['keywords'] != null ? List<String>.from(j['keywords']) : null,
+      )).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// 保存禁用的高频事程
+  Future<void> saveDisabledHighFreq(List<String> items) async {
+    await prefs.setStringList(_kDisabledHighFreq, items);
+  }
+
+  List<String> loadDisabledHighFreq() {
+    return prefs.getStringList(_kDisabledHighFreq) ?? [];
   }
 
   // ===== JSON 转换工具方法 =====
@@ -365,11 +511,23 @@ class StorageService {
 
   Map<String, dynamic> _agendaToJson(AgendaItem a) => {
     'id': a.id, 'date': a.date, 'time': a.time, 'content': a.content,
-    'note': a.note, 'isMustDo': a.isMustDo, 'status': a.status.name,
+    'note': a.note, 'voiceNote': a.voiceNote, 'isMustDo': a.isMustDo, 'status': a.status.name,
     'level': a.level.name, 'icon': a.icon,
     'isHighFrequency': a.isHighFrequency,
     'source': a.source.name,
     'remainingTime': a.remainingTime,
+    'category': a.category.name,
+    'streak': a.streak,
+    'lastCompletedDate': a.lastCompletedDate?.toIso8601String(),
+    'failCount': a.failCount,
+    'lastFailedDate': a.lastFailedDate?.toIso8601String(),
+    'chainAfterId': a.chainAfterId,
+    'timeDeviationCount': a.timeDeviationCount,
+    'lastActualTime': a.lastActualTime,
+    'suggestedTime': a.suggestedTime,
+    'customReminderConfig': a.customReminderConfig,
+    'wasPostponed': a.wasPostponed,
+    'wasSkipped': a.wasSkipped,
   };
 
   AgendaItem _agendaFromJson(Map<String, dynamic> j) => AgendaItem(
@@ -378,6 +536,7 @@ class StorageService {
     time: j['time'] ?? '',
     content: j['content'] ?? '',
     note: j['note'],
+    voiceNote: j['voiceNote'],
     isMustDo: j['isMustDo'] ?? false,
     status: AgendaStatus.values.firstWhere(
       (s) => s.name == j['status'],
@@ -385,7 +544,7 @@ class StorageService {
     ),
     level: AgendaLevel.values.firstWhere(
       (l) => l.name == j['level'],
-      orElse: () => AgendaLevel.normal,
+      orElse: () => j['level'] == 'mustDo' ? AgendaLevel.mustDoShort : AgendaLevel.normal,
     ),
     icon: j['icon'] ?? '📋',
     isHighFrequency: j['isHighFrequency'] ?? false,
@@ -394,6 +553,27 @@ class StorageService {
       orElse: () => AgendaSource.user,
     ),
     remainingTime: j['remainingTime'],
+    category: AgendaCategory.values.firstWhere(
+      (c) => c.name == j['category'],
+      orElse: () => AgendaCategory.custom,
+    ),
+    streak: j['streak'] ?? 0,
+    lastCompletedDate: j['lastCompletedDate'] != null
+        ? DateTime.tryParse(j['lastCompletedDate'] as String)
+        : null,
+    failCount: j['failCount'] ?? 0,
+    lastFailedDate: j['lastFailedDate'] != null
+        ? DateTime.tryParse(j['lastFailedDate'] as String)
+        : null,
+    chainAfterId: j['chainAfterId'],
+    timeDeviationCount: j['timeDeviationCount'] ?? 0,
+    lastActualTime: j['lastActualTime'],
+    suggestedTime: j['suggestedTime'],
+    customReminderConfig: j['customReminderConfig'] != null
+        ? Map<String, dynamic>.from(j['customReminderConfig'] as Map)
+        : null,
+    wasPostponed: j['wasPostponed'] ?? false,
+    wasSkipped: j['wasSkipped'] ?? false,
   );
 
   Map<String, dynamic> _shoppingToJson(ShoppingRecord r) => {
@@ -448,6 +628,8 @@ class StorageService {
       'id': l.id, 'change': l.change, 'reason': l.reason,
       'time': l.time.toIso8601String(),
     }).toList(),
+    'aiSuggestion': i.aiSuggestion,
+    'customSuggestion': i.customSuggestion,
   };
 
   InventoryItem _inventoryFromJson(Map<String, dynamic> j) => InventoryItem(
@@ -466,6 +648,8 @@ class StorageService {
       reason: l['reason'] ?? '',
       time: l['time'] != null ? DateTime.parse(l['time']) : DateTime.now(),
     )).toList(),
+    aiSuggestion: j['aiSuggestion'],
+    customSuggestion: j['customSuggestion'],
   );
 
   Map<String, dynamic> _tagToJson(TagDef t) => {

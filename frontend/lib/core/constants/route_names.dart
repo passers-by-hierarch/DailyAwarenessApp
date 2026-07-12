@@ -21,6 +21,7 @@ class RouteNames {
 
   // 购物记录
   static const String shopping = '/shopping';
+  static const String inventoryDetail = '/inventory-detail';
 
   // 我的页面相关
   static const String family = '/family';

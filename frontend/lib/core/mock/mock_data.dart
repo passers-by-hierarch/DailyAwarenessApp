@@ -356,7 +356,7 @@ class MockData {
       group: '生活管理',
       items: [
         MenuItem(id: '1', title: '物品位置记忆', description: '', icon: '📍', route: '/items'),
-        MenuItem(id: '2', title: '购物记录', description: '语音自动记录', icon: '🛒', route: '/shopping'),
+        MenuItem(id: '2', title: '物品记录', description: '记录物品及数量', icon: '📦', route: '/shopping'),
         MenuItem(id: '3', title: '家属管理', description: '已绑定2位家属', icon: '👨‍👩‍👧', route: '/family'),
         MenuItem(id: '4', title: '紧急求助设置', description: '', icon: '🆘', route: '/emergency-settings'),
       ],
@@ -364,7 +364,7 @@ class MockData {
     MenuGroup(
       group: '系统设置',
       items: [
-        MenuItem(id: '5', title: '提醒规则（全局）', description: '', icon: '🔔', route: '/reminder-rules'),
+        MenuItem(id: '5', title: '提醒规则', description: '', icon: '🔔', route: '/reminder-rules'),
         MenuItem(id: '6', title: '免打扰时段', description: '22:00-08:00', icon: '🔇', route: '/quiet-hours'),
         MenuItem(id: '7', title: 'AI 智能问答设置', description: '大模型配置', icon: '🤖', route: '/ai-settings'),
         MenuItem(id: '7a', title: '意图训练管理', description: '管理意图识别模式', icon: '🧠', route: '/intent-training'),

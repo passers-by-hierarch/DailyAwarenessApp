@@ -193,6 +193,8 @@ class _ItemsPageState extends State<ItemsPage> {
             ),
             const SizedBox(height: 8),
             Text(item.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
             const SizedBox(height: 8),
             Container(
@@ -290,7 +292,10 @@ class _ItemsPageState extends State<ItemsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(r.content, style: const TextStyle(fontSize: 14, color: AppColors.textPrimary)),
+                    Text(r.content,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 14, color: AppColors.textPrimary)),
                     if (itemUpdate != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 4),

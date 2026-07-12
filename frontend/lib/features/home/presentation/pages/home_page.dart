@@ -2,12 +2,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_icons.dart';
+import '../../../../core/constants/route_names.dart';
 import '../../../../core/models/app_models.dart';
 import '../../../../core/mock/mock_data.dart';
 import '../../../../core/state/app_store.dart';
+import '../../../../core/utils/agenda_utils.dart';
 import '../../../../shared/widgets/timeline_item.dart';
 import '../../../../shared/widgets/agenda_item.dart';
-import '../../../../shared/widgets/swipe_delete_wrapper.dart';
+import '../../../../shared/widgets/long_press_delete_wrapper.dart';
 import '../../../../shared/widgets/agenda_confirm_dialog.dart';
 
 /// 首页 - 对齐 HomePage.tsx
@@ -67,36 +70,19 @@ class _HomePageState extends State<HomePage> {
     return '$prefix${int.parse(parts[1])}月${int.parse(parts[2])}日 ${weekdays[dt.weekday % 7]}';
   }
 
-  bool get _isToday => _selectedDateKey == _ymd(DateTime.now());
+  bool get _isToday => _selectedDateKey == _ymd(context.read<AppStore>().now);
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<AppStore>();
-    final todayStr = _ymd(DateTime.now());
+    final todayStr = _ymd(store.now);
 
     final dayTimeline = store.timelineRecords.where((r) => r.date == _selectedDateKey).toList();
-    final dayAgendas = store.agendaItems.where((a) => a.date == _selectedDateKey).toList();
-
-    final now = DateTime.now();
-    final nowMinutes = now.hour * 60 + now.minute;
-
-    AgendaStatus effectiveStatus(AgendaItem a) {
-      if (a.status == AgendaStatus.pending && _isToday) {
-        final parts = a.time.split(':');
-        final m = (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
-        if (m < nowMinutes) return AgendaStatus.expired;
-      }
-      return a.status;
-    }
-
-    final pending = dayAgendas.where((a) => effectiveStatus(a) == AgendaStatus.pending)
+    final dayAgendas = store.agendaItems.where((a) => a.date == _selectedDateKey)
         .toList()..sort((a, b) => a.time.compareTo(b.time));
-    final expired = dayAgendas.where((a) => effectiveStatus(a) == AgendaStatus.expired)
-        .toList()..sort((a, b) => b.time.compareTo(a.time));
-    final completed = dayAgendas.where((a) => a.status == AgendaStatus.completed).toList();
 
-    final pendingCount = pending.length;
-    final completedCount = completed.length;
+    final pendingCount = dayAgendas.where((a) => AgendaUtils.effectiveStatus(a, isToday: _isToday, now: store.now) == AgendaStatus.pending).length;
+    final completedCount = dayAgendas.where((a) => a.status == AgendaStatus.completed).length;
     final totalCount = dayAgendas.length;
 
     return Container(
@@ -205,10 +191,10 @@ class _HomePageState extends State<HomePage> {
               // 内容区
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(bottom: 20),
                   children: _activeTab == 'timeline'
                       ? _buildTimelineContent(dayTimeline)
-                      : _buildAgendaContent(pending, expired, completed, dayAgendas),
+                      : _buildAgendaContent(dayAgendas),
                 ),
               ),
             ],
@@ -294,7 +280,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ];
     }
-    return records.map((r) => SwipeDeleteWrapper(
+    return records.map((r) => LongPressDeleteWrapper(
       onDelete: () => context.read<AppStore>().deleteTimelineRecord(r.id),
       confirmText: '删除',
       child: TimelineItemWidget(
@@ -304,7 +290,7 @@ class _HomePageState extends State<HomePage> {
     )).toList();
   }
 
-  List<Widget> _buildAgendaContent(List<AgendaItem> pending, List<AgendaItem> expired, List<AgendaItem> completed, List<AgendaItem> all) {
+  List<Widget> _buildAgendaContent(List<AgendaItem> all) {
     final widgets = <Widget>[];
     final store = context.read<AppStore>();
 
@@ -354,8 +340,8 @@ class _HomePageState extends State<HomePage> {
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.orange[50],
-            border: Border.all(color: Colors.orange[300]!),
+            color: AppColors.warningLight,
+            border: Border.all(color: AppColors.warning),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Column(
@@ -363,9 +349,9 @@ class _HomePageState extends State<HomePage> {
             children: [
               const Row(
                 children: [
-                  Icon(Icons.warning, size: 16, color: Colors.orange),
+                  Icon(Icons.warning, size: 16, color: AppColors.warning),
                   SizedBox(width: 8),
-                  Text('事程时间冲突', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.orange)),
+                  Text('事程时间冲突', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.warning)),
                 ],
               ),
               const SizedBox(height: 8),
@@ -373,12 +359,12 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 4),
               ...conflicts.map((c) => Padding(
                 padding: const EdgeInsets.only(left: 8),
-                child: Text('• ${c.time} ${c.content}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                child: Text('• ${c.time} ${c.content}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
               )),
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const Text('💡 建议：调整其中一个的时间', style: TextStyle(fontSize: 12, color: Colors.orange)),
+                  const Text('💡 建议：调整其中一个的时间', style: TextStyle(fontSize: 12, color: AppColors.warning)),
                   const SizedBox(width: 8),
                   GestureDetector(
                     onTap: () => store.clearAgendaConflictWarning(),
@@ -409,79 +395,22 @@ class _HomePageState extends State<HomePage> {
       return widgets;
     }
 
-    if (pending.isNotEmpty) {
-      widgets.add(Container(
-        padding: const EdgeInsets.only(top: 12, bottom: 8, left: 16, right: 16),
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.border, width: 1)),
+    // 平铺展示，按时间排序
+    widgets.addAll(all.map((a) => Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: LongPressDeleteWrapper(
+        onDelete: () => context.read<AppStore>().deleteAgenda(a.id),
+        confirmText: '删除',
+        child: AgendaItemWidget(
+          item: a,
+          onTap: () => Navigator.pushNamed(context, RouteNames.agendaDetail, arguments: a.id),
+          onComplete: () => context.read<AppStore>().completeAgenda(a.id),
+          onUncomplete: () => context.read<AppStore>().uncompleteAgenda(a.id),
+          onSkip: () => context.read<AppStore>().skipAgenda(a.id),
+          onUnskip: () => context.read<AppStore>().unskipAgenda(a.id),
         ),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Text('待进行 (${pending.length})', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
-        ),
-      ));
-      widgets.addAll(pending.map((a) => Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        child: SwipeDeleteWrapper(
-          onDelete: () => _showDeleteConfirmDialog(a),
-          confirmText: '删除',
-          child: AgendaItemWidget(
-            item: a,
-            onTap: () => Navigator.pushNamed(context, '/agenda', arguments: a.id),
-            onComplete: () => context.read<AppStore>().completeAgenda(a.id),
-            onPostpone: () => _showPostponeDialog(a.id),
-          ),
-        ),
-      )));
-    }
-
-    if (expired.isNotEmpty) {
-      widgets.add(Container(
-        padding: const EdgeInsets.only(top: 12, bottom: 8, left: 16, right: 16),
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.border, width: 1)),
-        ),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Text('已过期 (${expired.length})', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
-        ),
-      ));
-      widgets.addAll(expired.map((a) => Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        child: SwipeDeleteWrapper(
-          onDelete: () => _showDeleteConfirmDialog(a),
-          confirmText: '删除',
-          child: AgendaItemWidget(
-            item: a,
-            onTap: () => Navigator.pushNamed(context, '/agenda', arguments: a.id),
-          ),
-        ),
-      )));
-    }
-
-    if (completed.isNotEmpty) {
-      widgets.add(Container(
-        padding: const EdgeInsets.only(top: 12, bottom: 8, left: 16, right: 16),
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.border, width: 1)),
-        ),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Text('已完成 (${completed.length})', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
-        ),
-      ));
-      widgets.addAll(completed.map((a) => Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        child: SwipeDeleteWrapper(
-          onDelete: () => context.read<AppStore>().deleteAgenda(a.id),
-          confirmText: '删除',
-          child: AgendaItemWidget(
-            item: a,
-            onTap: () => Navigator.pushNamed(context, '/agenda', arguments: a.id),
-          ),
-        ),
-      )));
-    }
+      ),
+    )));
 
     return widgets;
   }
@@ -555,6 +484,7 @@ class _HomePageState extends State<HomePage> {
             children: [
               Expanded(
                 child: Text(item.content,
+                    maxLines: 2, overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.textPrimary)),
               ),
               // 时间调整
@@ -684,7 +614,7 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 16),
             Wrap(
               spacing: 10,
-              children: [5, 10, 15, 30].map((m) => ElevatedButton(
+              children: [5, 10, 15, 30, 60].map((m) => ElevatedButton(
                 onPressed: () {
                   context.read<AppStore>().postponeAgenda(agendaId, m);
                   Navigator.pop(ctx);
@@ -939,6 +869,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
     while (_isRecording) {
       await Future.delayed(const Duration(seconds: 1));
       if (!_isRecording) return;
+      if (!mounted) return;
       setState(() => _recordSeconds++);
       if (_recordSeconds >= 60) {
         _stopRecording();
@@ -1172,7 +1103,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                         const SizedBox(height: 8),
                         Align(
                           alignment: Alignment.centerLeft,
-                          child: Text(widget.reminder.content, style: const TextStyle(fontSize: 15, color: AppColors.textPrimary)),
+                          child: Text(widget.reminder.content, maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, color: AppColors.textPrimary)),
                         ),
                       ],
                     ),
@@ -1352,9 +1283,10 @@ class _CreateAgendaModalState extends State<CreateAgendaModal> {
       time: _selectedTime,
       date: _ymd(DateTime.now()),
       icon: icon,
-      isMustDo: _selectedLevel == AgendaLevel.mustDo,
+      isMustDo: _selectedLevel.isMustDo,
       level: _selectedLevel,
       source: AgendaSource.user,
+      category: AgendaCategory.temporary,
     ));
     _close();
   }
@@ -1429,21 +1361,8 @@ class _CreateAgendaModalState extends State<CreateAgendaModal> {
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       child: Row(
         children: [
-          // 2.6.1 关闭按钮：24px X、textTertiary颜色
-          if (_step == 0)
-            GestureDetector(
-              onTap: _close,
-              child: Container(
-                width: 24,
-                height: 24,
-                child: Icon(
-                  Icons.close,
-                  size: 24,
-                  color: AppColors.textTertiary,
-                ),
-              ),
-            )
-          else
+          // 返回按钮 - 左侧（仅 step > 0）
+          if (_step != 0)
             GestureDetector(
               onTap: () => setState(() => _step = 0),
               child: Container(
@@ -1457,7 +1376,7 @@ class _CreateAgendaModalState extends State<CreateAgendaModal> {
               ),
             ),
           if (title.isNotEmpty) ...[
-            const SizedBox(width: 12),
+            if (_step != 0) const SizedBox(width: 12),
             Expanded(
               child: Text(
                 title,
@@ -1466,6 +1385,20 @@ class _CreateAgendaModalState extends State<CreateAgendaModal> {
               ),
             ),
           ],
+          // 关闭按钮 - 右侧（仅 step == 0）
+          if (_step == 0)
+            GestureDetector(
+              onTap: _close,
+              child: Container(
+                width: 24,
+                height: 24,
+                child: Icon(
+                  AppIcons.x,
+                  size: 20,
+                  color: AppColors.textTertiary,
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1569,7 +1502,7 @@ class _CreateAgendaModalState extends State<CreateAgendaModal> {
                       width: 44,
                       height: 44,
                       decoration: BoxDecoration(
-                        color: Colors.amber,
+                        color: AppColors.warning,
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(Icons.star, color: Colors.white, size: 22),
@@ -1752,7 +1685,9 @@ class _CreateAgendaModalState extends State<CreateAgendaModal> {
                     const SizedBox(width: 8),
                     _buildLevelButton(AgendaLevel.important, '重要'),
                     const SizedBox(width: 8),
-                    _buildLevelButton(AgendaLevel.mustDo, '必做'),
+                    _buildLevelButton(AgendaLevel.mustDoShort, '短必做'),
+                    const SizedBox(width: 8),
+                    _buildLevelButton(AgendaLevel.mustDoLong, '长必做'),
                   ],
                 ),
               ],
@@ -1784,7 +1719,7 @@ class _CreateAgendaModalState extends State<CreateAgendaModal> {
 
   Widget _buildLevelButton(AgendaLevel level, String label) {
     final isSelected = _selectedLevel == level;
-    // 2.6.1: 三选一、普通、重要、必做，使用对应颜色
+    // 2.6.1: 普通、重要、短期必做、长期必做，使用对应颜色
     Color buttonColor;
     if (isSelected) {
       if (level == AgendaLevel.normal) buttonColor = AppColors.accent;
@@ -1872,7 +1807,9 @@ class _CreateAgendaModalState extends State<CreateAgendaModal> {
                             children: [
                               Row(
                                 children: [
-                                  Text(item.content, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+                                  Expanded(
+                                    child: Text(item.content, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+                                  ),
                                   const SizedBox(width: 6),
                                   if (item.matchRate >= 90)
                                     Container(
@@ -1921,6 +1858,7 @@ class _CreateAgendaModalState extends State<CreateAgendaModal> {
                           icon: item.icon,
                           isHighFrequency: true,
                           source: AgendaSource.ai,
+                          category: AgendaCategory.frequent,
                         ));
                         _close();
                       },
@@ -1958,6 +1896,7 @@ class _CreateAgendaModalState extends State<CreateAgendaModal> {
     while (_isRecording) {
       await Future.delayed(const Duration(seconds: 1));
       if (!_isRecording) return;
+      if (!mounted) return;
       setState(() => _recordSeconds++);
       if (_recordSeconds >= 60) {
         _stopRecording();

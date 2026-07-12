@@ -467,6 +467,32 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
             ),
             const SizedBox(height: 20),
 
+            // 事程策略配置已迁移至：我的 → 提醒规则
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.infoLight,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline, size: 16, color: AppColors.info),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      '事程提醒规则、级别策略、连续升级/降级、时间偏差等配置已移至「我的 → 提醒规则」',
+                      style: TextStyle(fontSize: 12, color: AppColors.info),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () => Navigator.pushNamed(context, '/reminder-rules'),
+                    child: const Icon(Icons.chevron_right, size: 18, color: AppColors.info),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(

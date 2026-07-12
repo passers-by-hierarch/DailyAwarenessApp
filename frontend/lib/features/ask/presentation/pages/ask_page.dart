@@ -495,11 +495,15 @@ class _AskPageState extends State<AskPage> {
                         color: AppColors.accent,
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        q,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: AppColors.textPrimary,
+                      Flexible(
+                        child: Text(
+                          q,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: AppColors.textPrimary,
+                          ),
                         ),
                       ),
                     ],
@@ -731,6 +735,8 @@ class _AskPageState extends State<AskPage> {
                     children: [
                       Text(
                         msg.content,
+                        maxLines: 10,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 15,
                           color: isUser ? Colors.white : AppColors.textPrimary,
@@ -843,6 +849,8 @@ class _AskPageState extends State<AskPage> {
                     )
                   : Text(
                       _streamingContent,
+                      maxLines: 10,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 15,
                         color: AppColors.textPrimary,

@@ -6,6 +6,9 @@ import '../../core/state/app_store.dart';
 import '../../shared/widgets/bottom_nav.dart';
 import '../../shared/widgets/agenda_confirm_dialog.dart';
 import '../../shared/widgets/late_off_work_dialog.dart';
+import '../../shared/widgets/demotion_confirm_dialog.dart';
+import '../../shared/widgets/smart_time_suggestion_dialog.dart';
+import '../../shared/widgets/chain_reminder_dialog.dart';
 import '../../features/home/presentation/pages/home_page.dart';
 import '../../features/ask/presentation/pages/ask_page.dart';
 import '../../features/habits/presentation/pages/habits_page.dart';
@@ -22,20 +25,50 @@ class MainLayout extends StatefulWidget {
 
 class _MainLayoutState extends State<MainLayout> {
   bool _lateOffWorkDialogShown = false;
+  bool _demotionDialogShown = false;
+  bool _smartTimeDialogShown = false;
+  bool _chainReminderDialogShown = false;
+  bool _postFrameScheduled = false;
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<AppStore>();
 
-    // 监听晚下班检测结果
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (store.lateOffWorkResult != null && !_lateOffWorkDialogShown) {
-        _lateOffWorkDialogShown = true;
-        showLateOffWorkDialog(context: context, result: store.lateOffWorkResult!).then((_) {
-          _lateOffWorkDialogShown = false;
-        });
-      }
-    });
+    // 监听策略弹窗
+    if (!_postFrameScheduled) {
+      _postFrameScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _postFrameScheduled = false;
+        // 策略3：连续失败降级
+        if (store.demotionPendingResult != null && !_demotionDialogShown) {
+          _demotionDialogShown = true;
+          showDemotionConfirmDialog(context: context, result: store.demotionPendingResult!).then((_) {
+            _demotionDialogShown = false;
+          });
+        }
+        // 策略4：智能时间推荐
+        if (store.smartTimeSuggestion != null && !_smartTimeDialogShown) {
+          _smartTimeDialogShown = true;
+          showSmartTimeSuggestionDialog(context: context, suggestion: store.smartTimeSuggestion!).then((_) {
+            _smartTimeDialogShown = false;
+          });
+        }
+        // 策略5：链式事程提醒
+        if (store.chainReminderResult != null && !_chainReminderDialogShown) {
+          _chainReminderDialogShown = true;
+          showChainReminderDialog(context: context, result: store.chainReminderResult!).then((_) {
+            _chainReminderDialogShown = false;
+          });
+        }
+        // 晚下班检测
+        if (store.lateOffWorkResult != null && !_lateOffWorkDialogShown) {
+          _lateOffWorkDialogShown = true;
+          showLateOffWorkDialog(context: context, result: store.lateOffWorkResult!).then((_) {
+            _lateOffWorkDialogShown = false;
+          });
+        }
+      });
+    }
 
     return Scaffold(
       body: SafeArea(
@@ -145,8 +178,9 @@ class _HomeVoiceButtonState extends State<_HomeVoiceButton> {
     // 模拟语音识别结果
     const voiceText = '起床，洗漱';
     // 使用AI意图识别
-    final result = await context.read<AppStore>().submitVoiceRecordWithAI(voiceText);
-    final pendingAgendas = context.read<AppStore>().pendingAgendaConfirm;
+    final store = context.read<AppStore>();
+    final result = await store.submitVoiceRecordWithAI(voiceText);
+    final pendingAgendas = store.pendingAgendaConfirm;
     final intentResult = result['_intentResult'];
 
     if (!mounted) return;
@@ -252,17 +286,20 @@ class _RecordNowDialogState extends State<_RecordNowDialog> {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
     // 使用AI意图识别
-    final result = await context.read<AppStore>().submitVoiceRecordWithAI(text);
-    final pendingAgendas = context.read<AppStore>().pendingAgendaConfirm;
+    final store = context.read<AppStore>();
+    final result = await store.submitVoiceRecordWithAI(text);
+    final pendingAgendas = store.pendingAgendaConfirm;
     final intentResult = result['_intentResult'];
 
     if (!mounted) return;
+    // 先获取根 navigator context，再 pop 当前弹窗，避免使用已失效的 context
+    final rootContext = Navigator.of(context).context;
     Navigator.pop(context);
 
     // 如果有待确认事程，弹出智能确认弹窗
     if (pendingAgendas.isNotEmpty && intentResult != null) {
       await showSmartAgendaConfirmDialog(
-        context: context,
+        context: rootContext,
         originalText: text,
         intentResult: intentResult,
         pendingAgendas: pendingAgendas,

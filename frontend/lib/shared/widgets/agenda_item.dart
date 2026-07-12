@@ -1,262 +1,282 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/models/app_models.dart';
+import '../../core/state/app_store.dart';
+import '../../core/utils/agenda_utils.dart';
 
-/// 事程列表项 - 对齐设计文档 2.3.5
-/// 本身不包含滑动删除逻辑，由外层 SwipeDeleteWrapper 包裹
+/// 事程列表项 - 精简版
+/// 展示：级别色条 + 勾选框 + 时间 + 内容 + 状态文字
+/// 可直接勾选完成，无需进入详情
 class AgendaItemWidget extends StatefulWidget {
   final AgendaItem item;
   final VoidCallback? onTap;
   final VoidCallback? onComplete;
+  final VoidCallback? onUncomplete;
   final VoidCallback? onPostpone;
-  final ValueChanged<bool>? onCheckboxChanged;
+  final VoidCallback? onSkip;
+  final VoidCallback? onUnskip;
 
   const AgendaItemWidget({
     super.key,
     required this.item,
     this.onTap,
     this.onComplete,
+    this.onUncomplete,
     this.onPostpone,
-    this.onCheckboxChanged,
+    this.onSkip,
+    this.onUnskip,
   });
 
   @override
   State<AgendaItemWidget> createState() => _AgendaItemWidgetState();
 }
 
-class _AgendaItemWidgetState extends State<AgendaItemWidget> {
-  Timer? _timer;
-  String _remainingTime = '';
+class _AgendaItemWidgetState extends State<AgendaItemWidget>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animController;
+  late Animation<double> _scaleAnim;
 
   @override
   void initState() {
     super.initState();
-    _updateRemainingTime();
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) => _updateRemainingTime());
+    _animController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _scaleAnim = Tween<double>(begin: 1.0, end: 0.92).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.easeInOut),
+    );
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _animController.dispose();
     super.dispose();
   }
 
-  void _updateRemainingTime() {
-    setState(() {
-      _remainingTime = _calculateRemainingTime(widget.item);
-    });
-  }
-
-  String _calculateRemainingTime(AgendaItem item) {
-    if (item.remainingTime != null && item.remainingTime!.contains('推迟')) {
-      return item.remainingTime!;
+  void _handleComplete() {
+    final store = context.read<AppStore>();
+    final status = AgendaUtils.effectiveStatus(widget.item,
+        isToday: widget.item.date == AgendaUtils.todayStr(now: store.now), now: store.now);
+    if (status == AgendaStatus.completed) {
+      if (widget.onUncomplete != null) {
+        HapticFeedback.lightImpact();
+        _animController.forward().then((_) => _animController.reverse());
+        widget.onUncomplete!();
+      }
+    } else if (widget.onComplete != null) {
+      HapticFeedback.mediumImpact();
+      _animController.forward().then((_) => _animController.reverse());
+      widget.onComplete!();
     }
-    if (item.date != _calcTodayStr()) {
-      return '待提醒';
-    }
-    final parts = item.time.split(':');
-    if (parts.length != 2) return '今日提醒';
-    final h = int.tryParse(parts[0]) ?? 0;
-    final m = int.tryParse(parts[1]) ?? 0;
-    final now = DateTime.now();
-    final agendaTime = DateTime(now.year, now.month, now.day, h, m);
-    final diff = agendaTime.difference(now);
-    if (diff.isNegative) {
-      return '已过期';
-    }
-    final hours = diff.inHours;
-    final minutes = diff.inMinutes % 60;
-    if (hours > 0) {
-      return '还有${hours}小时${minutes}分';
-    }
-    if (minutes > 0) {
-      return '还有${minutes}分钟';
-    }
-    return '即将开始';
-  }
-
-  String _calcTodayStr() {
-    final n = DateTime.now();
-    return '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
   }
 
   @override
   Widget build(BuildContext context) {
-    final status = _getEffectiveStatus(widget.item);
+    final store = context.watch<AppStore>();
+    final status = AgendaUtils.effectiveStatus(widget.item,
+        isToday: widget.item.date == AgendaUtils.todayStr(now: store.now), now: store.now);
     final levelColor = _getLevelColor(widget.item.level);
-    final isPending = status == AgendaStatus.pending;
+    final isFinished = status == AgendaStatus.completed;
+    final statusColor = _getStatusColor(status);
 
     return GestureDetector(
       onTap: widget.onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.bgSecondary,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: AppColors.itemShadow,
-        ),
-        child: Row(
-          children: [
-            // 级别颜色条
-            Container(
-              width: 6,
-              height: 80,
-              decoration: BoxDecoration(
-                color: levelColor,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(14),
-                  bottomLeft: Radius.circular(14),
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedBuilder(
+        animation: _scaleAnim,
+        builder: (context, child) {
+          return Transform.scale(
+            scale: _scaleAnim.value,
+            child: child,
+          );
+        },
+        child: Container(
+          height: 56,
+          decoration: BoxDecoration(
+            color: AppColors.bgSecondary,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: AppColors.itemShadow,
+          ),
+          child: Row(
+            children: [
+              // 级别颜色条 - 区分事程级别
+              Container(
+                width: 6,
+                decoration: BoxDecoration(
+                  color: levelColor,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(14),
+                    bottomLeft: Radius.circular(14),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            // 勾选框
-            Checkbox(
-              value: status == AgendaStatus.completed,
-              onChanged: (v) {
-                if (v == true && widget.onComplete != null) {
-                  widget.onComplete!();
-                }
-                if (widget.onCheckboxChanged != null) {
-                  widget.onCheckboxChanged!(v ?? false);
-                }
-              },
-              activeColor: AppColors.success,
-              checkColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-              side: BorderSide(color: AppColors.border, width: 2),
-            ),
-            const SizedBox(width: 8),
-            // 时间
-            SizedBox(
-              width: 48,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.item.time,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
-                      color: AppColors.textSecondary,
-                      fontFamily: 'monospace',
+              const SizedBox(width: 10),
+              // 勾选框 - 直接完成
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _handleComplete,
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isFinished ? AppColors.success : AppColors.border,
+                      width: 2,
                     ),
+                    color: isFinished ? AppColors.success : Colors.transparent,
                   ),
-                  if (isPending)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        _remainingTime,
-                        style: const TextStyle(fontSize: 12, color: AppColors.textTertiary),
-                      ),
-                    ),
-                ],
+                  child: isFinished
+                      ? const Icon(Icons.check, size: 16, color: Colors.white)
+                      : null,
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            // 图标
-            Text(widget.item.icon, style: const TextStyle(fontSize: 20)),
-            const SizedBox(width: 8),
-            // 内容
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          widget.item.content,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w500,
-                            color: status == AgendaStatus.completed
-                                ? AppColors.textTertiary
-                                : status == AgendaStatus.expired
-                                    ? AppColors.textTertiary
-                                    : AppColors.textPrimary,
-                            decoration: status == AgendaStatus.completed
-                                ? TextDecoration.lineThrough
-                                : null,
-                          ),
-                        ),
-                      ),
-                    ],
+              const SizedBox(width: 10),
+              // 时间
+              SizedBox(
+                width: 44,
+                child: Text(
+                  widget.item.time,
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: statusColor,
+                    fontFamily: 'monospace',
                   ),
-                  if (widget.item.note != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        widget.item.note!,
-                        style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                      ),
-                    ),
-                  // 状态与级别标签行
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        _buildStatusBadge(status),
-                        _buildLevelBadge(widget.item.level),
-                        _buildCategoryBadge(widget.item.category),
-                        if (widget.item.isHighFrequency)
-                          _buildBadge('高频', AppColors.purple, AppColors.purpleLight),
-                        if (widget.item.source == AgendaSource.ai)
-                          _buildBadge('AI', AppColors.accent, AppColors.accentLight),
-                      ],
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
-            // 操作按钮 - 只在待进行状态显示
-            if (isPending)
-              Row(
-                children: [
-                  Tooltip(
-                    message: '推迟',
-                    child: GestureDetector(
-                      onTap: widget.onPostpone,
-                      child: Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: AppColors.warningLight,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.schedule, size: 14, color: AppColors.warning),
-                      ),
-                    ),
+              const SizedBox(width: 10),
+              // 内容
+              Expanded(
+                child: Text(
+                  widget.item.content,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: isFinished ? AppColors.textTertiary : AppColors.textPrimary,
+                    decoration: isFinished ? TextDecoration.lineThrough : null,
                   ),
-                  const SizedBox(width: 6),
-                  Tooltip(
-                    message: '完成',
-                    child: GestureDetector(
-                      onTap: widget.onComplete,
-                      child: Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: AppColors.successLight,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.check, size: 14, color: AppColors.success),
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
-          ],
+              const SizedBox(width: 8),
+              // 状态图标区（延期/跳过/历史标记）
+              _buildStatusIcons(),
+              const SizedBox(width: 10),
+              // 右侧状态文字：待进行/已完成/已过期
+              _buildRightStatusText(status),
+              const SizedBox(width: 14),
+            ],
+          ),
         ),
       ),
     );
   }
 
+  /// 状态图标区：延期/延期完成历史标记
+  /// 跳过状态右侧已有"已跳过"文字，无需重复图标
+  Widget _buildStatusIcons() {
+    final status = widget.item.status;
+    final List<Widget> icons = [];
+
+    // 当前状态：延期图标
+    if (status == AgendaStatus.postponed) {
+      icons.add(const Icon(Icons.schedule, size: 14, color: AppColors.warning));
+    }
+
+    // 待进行状态下的延期历史标记：曾经延期过后来取消完成
+    if (status == AgendaStatus.pending && widget.item.wasPostponed) {
+      icons.add(const Icon(Icons.schedule, size: 14, color: AppColors.warning));
+    }
+
+    // 过期状态下的延期历史标记：曾经延期过后来过期
+    if (status == AgendaStatus.expired && widget.item.wasPostponed) {
+      icons.add(const Icon(Icons.schedule, size: 14, color: AppColors.warning));
+    }
+
+    // 完成状态下的历史标记：延期完成
+    if (status == AgendaStatus.completed && widget.item.wasPostponed) {
+      icons.add(const Icon(Icons.schedule, size: 14, color: AppColors.warning));
+    }
+
+    if (icons.isEmpty) return const SizedBox.shrink();
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (int i = 0; i < icons.length; i++) ...[
+          if (i > 0) const SizedBox(width: 4),
+          icons[i],
+        ],
+      ],
+    );
+  }
+
+  /// 右侧状态文字：待进行/已完成/已过期/已跳过
+  Widget _buildRightStatusText(AgendaStatus status) {
+    switch (status) {
+      case AgendaStatus.pending:
+      case AgendaStatus.postponed:
+        return const Text(
+          '待进行',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.accent,
+          ),
+        );
+      case AgendaStatus.completed:
+        return const Text(
+          '已完成',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.success,
+          ),
+        );
+      case AgendaStatus.expired:
+        return const Text(
+          '已过期',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.danger,
+          ),
+        );
+      case AgendaStatus.skipped:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.onUnskip != null)
+              GestureDetector(
+                onTap: widget.onUnskip,
+                behavior: HitTestBehavior.opaque,
+                child: const Icon(Icons.restore, size: 16, color: AppColors.accent),
+              ),
+            if (widget.onUnskip != null) const SizedBox(width: 4),
+            const Text(
+              '已跳过',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textTertiary,
+              ),
+            ),
+          ],
+        );
+    }
+  }
+
+  /// 级别颜色
   Color _getLevelColor(AgendaLevel level) {
     switch (level) {
-      case AgendaLevel.mustDo:
+      case AgendaLevel.mustDoShort:
+      case AgendaLevel.mustDoLong:
         return AppColors.danger;
       case AgendaLevel.important:
         return AppColors.warning;
@@ -266,58 +286,20 @@ class _AgendaItemWidgetState extends State<AgendaItemWidget> {
     }
   }
 
-  Widget _buildLevelBadge(AgendaLevel level) {
-    final config = {
-      AgendaLevel.mustDo: ('必做', AppColors.danger, AppColors.dangerLight),
-      AgendaLevel.important: ('重要', AppColors.warning, AppColors.warningLight),
-      AgendaLevel.normal: ('普通', AppColors.accent, AppColors.accentLight),
-    };
-    final c = config[level]!;
-    return _buildBadge(c.$1, c.$2, c.$3);
-  }
-
-  AgendaStatus _getEffectiveStatus(AgendaItem item) {
-    if (item.status == AgendaStatus.pending && item.date == _calcTodayStr()) {
-      final parts = item.time.split(':');
-      final h = int.tryParse(parts[0]) ?? 0;
-      final m = int.tryParse(parts[1]) ?? 0;
-      final now = DateTime.now();
-      if (h * 60 + m < now.hour * 60 + now.minute) return AgendaStatus.expired;
+  /// 状态颜色
+  Color _getStatusColor(AgendaStatus status) {
+    switch (status) {
+      case AgendaStatus.completed:
+        return AppColors.success;
+      case AgendaStatus.postponed:
+        return AppColors.warning;
+      case AgendaStatus.skipped:
+        return AppColors.textTertiary;
+      case AgendaStatus.expired:
+        return AppColors.danger;
+      case AgendaStatus.pending:
+      default:
+        return AppColors.accent;
     }
-    return item.status;
-  }
-
-  Widget _buildBadge(String text, Color color, Color bg) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(text, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w500)),
-    );
-  }
-
-  Widget _buildStatusBadge(AgendaStatus status) {
-    final config = {
-      AgendaStatus.completed: ('已完成', AppColors.success, AppColors.successLight),
-      AgendaStatus.postponed: ('已延后', AppColors.warning, AppColors.warningLight),
-      AgendaStatus.skipped: ('已跳过', AppColors.textTertiary, AppColors.bgTertiary),
-      AgendaStatus.expired: ('已过期', AppColors.danger, AppColors.dangerLight),
-      AgendaStatus.pending: ('待进行', AppColors.warning, AppColors.warningLight),
-    };
-    final c = config[status]!;
-    return _buildBadge(c.$1, c.$2, c.$3);
-  }
-
-  Widget _buildCategoryBadge(AgendaCategory category) {
-    final config = {
-      AgendaCategory.dailyMustDo: ('每日必做', AppColors.danger, AppColors.dangerLight),
-      AgendaCategory.frequent: ('常用', AppColors.purple, AppColors.purpleLight),
-      AgendaCategory.temporary: ('临时', AppColors.info, AppColors.infoLight),
-      AgendaCategory.custom: ('自定义', AppColors.textSecondary, AppColors.bgTertiary),
-    };
-    final c = config[category]!;
-    return _buildBadge(c.$1, c.$2, c.$3);
   }
 }

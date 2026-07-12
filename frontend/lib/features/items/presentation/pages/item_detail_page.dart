@@ -84,14 +84,16 @@ class _ItemDetailPageState extends State<ItemDetailPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(item.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                Text(item.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
                 const SizedBox(height: 4),
                 Row(
                   children: [
                     const Icon(Icons.location_on_outlined, size: 14, color: AppColors.info),
                     const SizedBox(width: 4),
-                    Text('当前位置：${item.location}',
-                        style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                    Expanded(
+                      child: Text('当前位置：${item.location}', maxLines: 2, overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                    ),
                   ],
                 ),
               ],
@@ -149,7 +151,9 @@ class _ItemDetailPageState extends State<ItemDetailPage> {
                     children: [
                       Row(
                         children: [
-                          Text(e.key, style: TextStyle(fontSize: 13, color: isTop ? AppColors.accent : AppColors.textPrimary, fontWeight: isTop ? FontWeight.w600 : FontWeight.normal)),
+                          Flexible(
+                            child: Text(e.key, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: isTop ? AppColors.accent : AppColors.textPrimary, fontWeight: isTop ? FontWeight.w600 : FontWeight.normal)),
+                          ),
                           if (isTop) ...[
                             const SizedBox(width: 6),
                             const Icon(Icons.star, size: 12, color: AppColors.accent),

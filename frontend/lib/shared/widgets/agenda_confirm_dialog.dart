@@ -130,7 +130,7 @@ class _SmartAgendaConfirmDialogState extends State<SmartAgendaConfirmDialog> {
         content: editable.content,
         time: editable.time,
         date: editable.date,
-        isMustDo: editable.level == AgendaLevel.mustDo,
+        isMustDo: editable.level.isMustDo,
         level: editable.level,
         status: AgendaStatus.pending,
         remainingTime: editable.date == MockData.todayStr ? '今日提醒' : '待提醒',
@@ -165,7 +165,7 @@ class _SmartAgendaConfirmDialogState extends State<SmartAgendaConfirmDialog> {
             type: IntentType.agendaCreate,
             slots: {
               'content': agenda.content,
-              'is_must_do': agenda.level == AgendaLevel.mustDo,
+              'is_must_do': agenda.level.isMustDo,
               'time': agenda.time,
               'date_offset': MockData.dateOffset(0) == agenda.date
                   ? 0
@@ -364,7 +364,12 @@ class _SmartAgendaConfirmDialogState extends State<SmartAgendaConfirmDialog> {
               children: [
                 Row(
                   children: [
-                    Text(agenda.content, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                    Expanded(
+                      child: Text(agenda.content,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                    ),
                     const SizedBox(width: 6),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -401,8 +406,10 @@ class _SmartAgendaConfirmDialogState extends State<SmartAgendaConfirmDialog> {
 
   (String, Color, IconData) _getLevelInfo(AgendaLevel level) {
     switch (level) {
-      case AgendaLevel.mustDo:
-        return ('必做', AppColors.danger, AppIcons.star);
+      case AgendaLevel.mustDoShort:
+        return ('短期必做', AppColors.danger, AppIcons.star);
+      case AgendaLevel.mustDoLong:
+        return ('长期必做', AppColors.danger, AppIcons.star);
       case AgendaLevel.important:
         return ('重要', AppColors.warning, AppIcons.alertCircle);
       case AgendaLevel.normal:
@@ -638,7 +645,8 @@ class _SmartAgendaConfirmDialogState extends State<SmartAgendaConfirmDialog> {
                   items: const [
                     DropdownMenuItem(value: AgendaLevel.normal, child: Text('普通')),
                     DropdownMenuItem(value: AgendaLevel.important, child: Text('重要')),
-                    DropdownMenuItem(value: AgendaLevel.mustDo, child: Text('必做')),
+                    DropdownMenuItem(value: AgendaLevel.mustDoShort, child: Text('短期必做')),
+                    DropdownMenuItem(value: AgendaLevel.mustDoLong, child: Text('长期必做')),
                   ],
                   onChanged: (v) => setState(() => agenda.level = v!),
                 ),

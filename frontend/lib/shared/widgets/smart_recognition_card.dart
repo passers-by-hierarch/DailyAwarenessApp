@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_icons.dart';
 import '../../core/models/app_models.dart';
+import '../../core/services/intent_recognition_service.dart';
 import '../../core/state/app_store.dart';
 
 /// 通用智能识别结果卡片
@@ -285,12 +286,50 @@ class _SmartRecognitionCardState extends State<SmartRecognitionCard> {
     );
   }
 
+  IntentType _parseIntentType(String value) {
+    switch (value) {
+      case 'behavior':
+        return IntentType.behavior;
+      case 'shopping':
+        return IntentType.shopping;
+      case 'item_location':
+        return IntentType.itemLocation;
+      case 'agenda_create':
+        return IntentType.agendaCreate;
+      case 'inventory_consume':
+        return IntentType.inventoryConsume;
+      case 'general':
+      default:
+        return IntentType.general;
+    }
+  }
+
   void _saveEdit() {
     final store = context.read<AppStore>();
     store.updateRecordIntentData(widget.record.id, _editableSlots);
+
+    final intentTypeStr = widget.record.sideEffects?.intentData?.intentType;
+    if (intentTypeStr != null && _editableSlots.isNotEmpty) {
+      final intentType = _parseIntentType(intentTypeStr);
+      final recordTime = '${widget.record.time.hour.toString().padLeft(2, '0')}:${widget.record.time.minute.toString().padLeft(2, '0')}';
+      final slots = [
+        TimelineSlot(
+          time: recordTime,
+          intents: [
+            IntentItem(
+              type: intentType,
+              slots: Map<String, dynamic>.from(_editableSlots),
+              confidence: 0.95,
+            ),
+          ],
+        ),
+      ];
+      store.addIntentPattern(widget.record.content, slots);
+    }
+
     setState(() => _isEditing = false);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('识别结果已更新'), duration: Duration(seconds: 1)),
+      const SnackBar(content: Text('识别结果已更新，已添加到意图管理'), duration: Duration(seconds: 1)),
     );
   }
 
@@ -336,7 +375,7 @@ class _SmartRecognitionCardState extends State<SmartRecognitionCard> {
       case 'item_location':
         return ('物品位置', AppColors.info, AppIcons.package);
       case 'inventory_consume':
-        return ('库存消耗', Colors.teal, AppIcons.droplet);
+        return ('库存消耗', AppColors.accent, AppIcons.droplet);
       case 'agenda_create':
         return ('创建事程', AppColors.info, AppIcons.calendar);
       case 'behavior':
@@ -409,12 +448,16 @@ class _SmartRecognitionCardState extends State<SmartRecognitionCard> {
           style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
         ),
         const Spacer(),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 14,
-            color: AppColors.textPrimary,
-            fontWeight: FontWeight.w600,
+        Flexible(
+          child: Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 14,
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ],

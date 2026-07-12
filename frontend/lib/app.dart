@@ -11,6 +11,7 @@ import 'features/timeline/presentation/pages/timeline_detail_page.dart';
 import 'features/items/presentation/pages/items_page.dart';
 import 'features/items/presentation/pages/item_detail_page.dart';
 import 'features/shopping/presentation/pages/shopping_page.dart';
+import 'features/shopping/presentation/pages/inventory_detail_page.dart';
 import 'features/profile/presentation/pages/family_page.dart';
 import 'features/profile/presentation/pages/emergency_settings_page.dart';
 import 'features/profile/presentation/pages/reminder_rules_page.dart';
@@ -49,13 +50,14 @@ class DailyAwarenessApp extends StatelessWidget {
       ],
       home: const MainLayout(),
       routes: {
-        RouteNames.agendaDetail: (ctx) => const AgendaDetailPage(),
+        RouteNames.agendaDetail: (ctx) => AgendaDetailPage(),
         RouteNames.editAgenda: (ctx) => const EditAgendaPage(),
         RouteNames.frequentAgenda: (ctx) => const FrequentAgendaPage(),
         RouteNames.timelineDetail: (ctx) => const TimelineDetailPage(),
         RouteNames.items: (ctx) => const ItemsPage(),
         RouteNames.itemDetail: (ctx) => const ItemDetailPage(),
         RouteNames.shopping: (ctx) => const ShoppingPage(),
+        RouteNames.inventoryDetail: (ctx) => const InventoryDetailPage(),
         RouteNames.family: (ctx) => const FamilyPage(),
         RouteNames.emergencySettings: (ctx) => const EmergencySettingsPage(),
         RouteNames.reminderRules: (ctx) => const ReminderRulesPage(),

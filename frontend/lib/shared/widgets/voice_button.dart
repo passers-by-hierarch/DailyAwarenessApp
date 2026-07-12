@@ -94,6 +94,7 @@ class _VoiceButtonState extends State<VoiceButton>
     while (_isRecording) {
       await Future.delayed(const Duration(seconds: 1));
       if (!_isRecording) return;
+      if (!mounted) return;
       setState(() => _recordSeconds++);
       // 最大录音时长60秒，自动停止
       if (_recordSeconds >= 60) {
@@ -135,10 +136,12 @@ class _VoiceButtonState extends State<VoiceButton>
     });
 
     // 使用AI意图识别版
-    final result = await context.read<AppStore>().submitVoiceRecordWithAI(text);
-    final pendingAgendas = context.read<AppStore>().pendingAgendaConfirm;
+    final store = context.read<AppStore>();
+    final result = await store.submitVoiceRecordWithAI(text);
+    final pendingAgendas = store.pendingAgendaConfirm;
     final intentResult = result['_intentResult'];
 
+    if (!mounted) return;
     setState(() {
       _showSubmitted = false;
     });
@@ -212,6 +215,7 @@ class _VoiceButtonState extends State<VoiceButton>
           final pendingAgendas = context.read<AppStore>().pendingAgendaConfirm;
           final intentResult = result['_intentResult'];
 
+          if (!mounted) return;
           setState(() => _showSubmitted = false);
 
           if (pendingAgendas.isNotEmpty && intentResult != null) {

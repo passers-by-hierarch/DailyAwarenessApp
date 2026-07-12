@@ -5,7 +5,6 @@ import '../../core/constants/app_icons.dart';
 import '../../core/models/app_models.dart';
 import '../../core/state/app_store.dart';
 
-/// 时间线列表项 - 对齐设计文档 2.3.6
 class TimelineItemWidget extends StatelessWidget {
   final TimelineRecord record;
   final VoidCallback? onTap;
@@ -22,6 +21,7 @@ class TimelineItemWidget extends StatelessWidget {
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
+        constraints: const BoxConstraints(minHeight: 72),
         decoration: BoxDecoration(
           color: AppColors.bgSecondary,
           borderRadius: BorderRadius.circular(10),
@@ -32,7 +32,6 @@ class TimelineItemWidget extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 时间列 - 对齐设计文档 2.3.6：宽度 48px，字号 14px Mono 字体，居中对齐
               SizedBox(
                 width: 48,
                 child: Text(
@@ -50,7 +49,6 @@ class TimelineItemWidget extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 标签行 - 对齐设计文档：flex-wrap，gap 6px，margin-bottom 6px
                     if (allTags.isNotEmpty) ...[
                       Wrap(
                         spacing: 6,
@@ -62,9 +60,10 @@ class TimelineItemWidget extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                     ],
-                    // 主内容文字 - 对齐设计文档：字号 15px，字重 500，颜色 `--text-primary`
                     Text(
                       record.content,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 15,
                         color: AppColors.textPrimary,
@@ -99,23 +98,45 @@ class TimelineItemWidget extends StatelessWidget {
     );
   }
 
+  Widget _buildAgendaStatusChips(AppStore store) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppColors.accentLight,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(AppIcons.link, size: 12, color: AppColors.accent),
+          const SizedBox(width: 4),
+          Text(
+            record.matchedAgenda ?? '关联事程',
+            style: const TextStyle(fontSize: 11, color: AppColors.accent, fontWeight: FontWeight.w500),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTagChip(TagDef? tag, String tagId) {
-    // 标签项 - 对齐设计文档：padding 2px 8px，圆角 4px，字号 12px，带图标
     if (tag == null) {
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
           color: AppColors.bgTertiary,
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(6),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(AppIcons.tag, size: 12, color: AppColors.textTertiary),
-            const SizedBox(width: 2),
+            const SizedBox(width: 3),
             const Text(
               '已删除',
-              style: TextStyle(fontSize: 12, color: AppColors.textTertiary, decoration: TextDecoration.lineThrough),
+              style: TextStyle(fontSize: 11, color: AppColors.textTertiary, decoration: TextDecoration.lineThrough),
             ),
           ],
         ),
@@ -123,22 +144,27 @@ class TimelineItemWidget extends StatelessWidget {
     }
     final colorSet = AppColors.tagColors[tag.color] ?? AppColors.tagColors['gray']!;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: colorSet.bg,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: colorSet.color.withOpacity(0.2), width: 0.5),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(_getTagIcon(tag.id, tag.name, !tag.system, tag.icon), size: 12, color: colorSet.color),
-          const SizedBox(width: 2),
+          tag.system
+              ? Icon(_getSystemTagIcon(tag.id), size: 13, color: colorSet.color)
+              : Text(tag.icon == '#' ? '🏷' : tag.icon, style: const TextStyle(fontSize: 13)),
+          const SizedBox(width: 4),
           Text(
             tag.name,
             style: TextStyle(
               fontSize: 12,
               color: colorSet.color,
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w600,
+              height: 1.2,
             ),
           ),
         ],
@@ -146,78 +172,13 @@ class TimelineItemWidget extends StatelessWidget {
     );
   }
 
-  IconData _getTagIcon(String tagId, String tagName, bool isCustom, String icon) {
-    if (isCustom) return AppIcons.tag;
-    if (tagName.contains('行为') || tagName.contains('活动')) {
-      return AppIcons.activity;
+  IconData _getSystemTagIcon(String tagId) {
+    switch (tagId) {
+      case 'behavior': return AppIcons.activity;
+      case 'item': return AppIcons.package;
+      case 'shopping': return AppIcons.shoppingCart;
+      case 'event': return AppIcons.mapPin;
+      default: return AppIcons.tag;
     }
-    if (tagName.contains('物品') || tagName.contains('位置')) {
-      return AppIcons.package;
-    }
-    if (tagName.contains('购物')) {
-      return AppIcons.shoppingCart;
-    }
-    if (tagName.contains('事件') || tagName.contains('日常')) {
-      return AppIcons.mapPin;
-    }
-    return AppIcons.tag;
-  }
-
-  Widget _buildAgendaStatusChips(AppStore store) {
-    final agenda = record.linkedAgendaId != null
-        ? store.agendaItems.where((a) => a.id == record.linkedAgendaId).firstOrNull
-        : null;
-
-    if (agenda != null) {
-      switch (agenda.status) {
-        case AgendaStatus.completed:
-          return _buildStatusChip('已完成', Colors.green, AppIcons.checkCircle);
-        case AgendaStatus.expired:
-        case AgendaStatus.skipped:
-          return _buildStatusChip('已放弃', AppColors.textTertiary, AppIcons.xCircle);
-        case AgendaStatus.pending:
-        case AgendaStatus.postponed:
-          return Wrap(
-            spacing: 6,
-            children: [
-              _buildStatusChip('已创建', AppColors.info, AppIcons.calendar),
-              _buildStatusChip('待完成', Colors.orange, AppIcons.clock),
-            ],
-          );
-      }
-    }
-
-    return Wrap(
-      spacing: 6,
-      children: [
-        _buildStatusChip('已创建', AppColors.info, AppIcons.calendar),
-        _buildStatusChip('待完成', Colors.orange, AppIcons.clock),
-      ],
-    );
-  }
-
-  Widget _buildStatusChip(String label, Color color, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: color,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }

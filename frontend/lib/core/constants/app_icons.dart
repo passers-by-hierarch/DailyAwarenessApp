@@ -132,4 +132,8 @@ class AppIcons {
   static const IconData person = LucideIcons.user;
   static const IconData checkCircle2 = LucideIcons.circle_check;
   static const IconData block = LucideIcons.square;
+  static const IconData list = LucideIcons.list;
+  static const IconData edit = LucideIcons.pencil;
+  static const IconData edit3 = LucideIcons.pencil_line;
+  static const IconData zap = LucideIcons.zap;
 }

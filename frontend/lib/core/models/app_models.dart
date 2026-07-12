@@ -10,7 +10,14 @@ class Range {
   const Range(this.start, this.end);
 }
 
-enum AgendaLevel { normal, important, mustDo }
+enum AgendaLevel {
+  normal,
+  important,
+  mustDoShort,
+  mustDoLong;
+
+  bool get isMustDo => this == mustDoShort || this == mustDoLong;
+}
 
 enum NoteType { voice, text }
 
@@ -218,8 +225,20 @@ class AgendaItem {
   final AgendaSource source;
   final String? matchedTimeline;
   final String? note;
+  final String? voiceNote;
   final String? remainingTime;
   final AgendaCategory category;
+  final int streak; // 连续完成天数
+  final DateTime? lastCompletedDate; // 上次完成日期
+  final int failCount; // 连续失败次数（过期/跳过）
+  final DateTime? lastFailedDate; // 上次失败日期
+  final String? chainAfterId; // 链式事程：完成后触发关联事程提醒
+  final int timeDeviationCount; // 实际完成时间偏差次数
+  final String? lastActualTime; // 上次实际完成时间 HH:mm
+  final String? suggestedTime; // 智能推荐的新时间 HH:mm
+  final Map<String, dynamic>? customReminderConfig; // 自定义提醒规则（null=使用全局）
+  final bool wasPostponed; // 历史标记：是否曾经延期过（完成后保留）
+  final bool wasSkipped; // 历史标记：是否曾经跳过过（完成后保留）
 
   const AgendaItem({
     required this.id,
@@ -236,8 +255,20 @@ class AgendaItem {
     this.source = AgendaSource.user,
     this.matchedTimeline,
     this.note,
+    this.voiceNote,
     this.remainingTime,
     this.category = AgendaCategory.custom,
+    this.streak = 0,
+    this.lastCompletedDate,
+    this.failCount = 0,
+    this.lastFailedDate,
+    this.chainAfterId,
+    this.timeDeviationCount = 0,
+    this.lastActualTime,
+    this.suggestedTime,
+    this.customReminderConfig,
+    this.wasPostponed = false,
+    this.wasSkipped = false,
   });
 
   AgendaItem copyWith({
@@ -255,8 +286,20 @@ class AgendaItem {
     AgendaSource? source,
     String? matchedTimeline,
     String? note,
+    String? voiceNote,
     String? remainingTime,
     AgendaCategory? category,
+    int? streak,
+    DateTime? lastCompletedDate,
+    int? failCount,
+    DateTime? lastFailedDate,
+    String? chainAfterId,
+    int? timeDeviationCount,
+    String? lastActualTime,
+    String? suggestedTime,
+    Map<String, dynamic>? customReminderConfig,
+    bool? wasPostponed,
+    bool? wasSkipped,
   }) {
     return AgendaItem(
       id: id ?? this.id,
@@ -273,10 +316,65 @@ class AgendaItem {
       source: source ?? this.source,
       matchedTimeline: matchedTimeline ?? this.matchedTimeline,
       note: note ?? this.note,
+      voiceNote: voiceNote ?? this.voiceNote,
       remainingTime: remainingTime ?? this.remainingTime,
       category: category ?? this.category,
+      streak: streak ?? this.streak,
+      lastCompletedDate: lastCompletedDate ?? this.lastCompletedDate,
+      failCount: failCount ?? this.failCount,
+      lastFailedDate: lastFailedDate ?? this.lastFailedDate,
+      chainAfterId: chainAfterId ?? this.chainAfterId,
+      timeDeviationCount: timeDeviationCount ?? this.timeDeviationCount,
+      lastActualTime: lastActualTime ?? this.lastActualTime,
+      suggestedTime: suggestedTime ?? this.suggestedTime,
+      customReminderConfig: customReminderConfig ?? this.customReminderConfig,
+      wasPostponed: wasPostponed ?? this.wasPostponed,
+      wasSkipped: wasSkipped ?? this.wasSkipped,
     );
   }
+}
+
+/// 连续失败降级待确认结果
+class DemotionPendingResult {
+  final AgendaItem agenda;
+  final AgendaLevel currentLevel;
+  final AgendaLevel suggestedLevel;
+  final int failCount;
+
+  const DemotionPendingResult({
+    required this.agenda,
+    required this.currentLevel,
+    required this.suggestedLevel,
+    required this.failCount,
+  });
+}
+
+/// 智能时间推荐结果
+class SmartTimeSuggestion {
+  final AgendaItem agenda;
+  final String scheduledTime;
+  final String suggestedTime;
+  final int deviationCount;
+  final int avgDeviationMinutes;
+
+  const SmartTimeSuggestion({
+    required this.agenda,
+    required this.scheduledTime,
+    required this.suggestedTime,
+    required this.deviationCount,
+    required this.avgDeviationMinutes,
+  });
+}
+
+/// 链式事程提醒结果
+class ChainReminderResult {
+  final AgendaItem completedAgenda;
+  final List<AgendaItem> nextAgendas;
+
+  const ChainReminderResult({
+    required this.completedAgenda,
+    required this.nextAgendas,
+  });
 }
 
 class AgendaRecommendation {
@@ -434,6 +532,9 @@ class InventoryItem {
   final DateTime lastUpdated;
   final DateTime? expireDate;
   final List<InventoryLog> logs;
+  final String? aiSuggestion;
+  final String? customSuggestion;
+  final double? dailyUsage;
 
   const InventoryItem({
     required this.id,
@@ -444,6 +545,9 @@ class InventoryItem {
     required this.lastUpdated,
     this.expireDate,
     this.logs = const [],
+    this.aiSuggestion,
+    this.customSuggestion,
+    this.dailyUsage,
   });
 
   InventoryItem copyWith({
@@ -455,6 +559,9 @@ class InventoryItem {
     DateTime? lastUpdated,
     DateTime? expireDate,
     List<InventoryLog>? logs,
+    String? aiSuggestion,
+    String? customSuggestion,
+    double? dailyUsage,
   }) {
     return InventoryItem(
       id: id ?? this.id,
@@ -465,6 +572,9 @@ class InventoryItem {
       lastUpdated: lastUpdated ?? this.lastUpdated,
       expireDate: expireDate ?? this.expireDate,
       logs: logs ?? this.logs,
+      aiSuggestion: aiSuggestion ?? this.aiSuggestion,
+      customSuggestion: customSuggestion ?? this.customSuggestion,
+      dailyUsage: dailyUsage ?? this.dailyUsage,
     );
   }
 }
@@ -474,12 +584,35 @@ class InventoryLog {
   final double change;
   final String reason;
   final DateTime time;
+  final String? sourceType; // 'timeline' | 'agenda'
+  final String? sourceId;   // 关联的时间线ID或事程ID
+
   const InventoryLog({
     required this.id,
     required this.change,
     required this.reason,
     required this.time,
+    this.sourceType,
+    this.sourceId,
   });
+
+  InventoryLog copyWith({
+    String? id,
+    double? change,
+    String? reason,
+    DateTime? time,
+    String? sourceType,
+    String? sourceId,
+  }) {
+    return InventoryLog(
+      id: id ?? this.id,
+      change: change ?? this.change,
+      reason: reason ?? this.reason,
+      time: time ?? this.time,
+      sourceType: sourceType ?? this.sourceType,
+      sourceId: sourceId ?? this.sourceId,
+    );
+  }
 }
 
 class InventoryUpdate {
