@@ -1,2 +1,2 @@
-# DailyAwarenessApp
-日常行为管家
+# 生活助手（LifeAssistant）
+智能生活管家

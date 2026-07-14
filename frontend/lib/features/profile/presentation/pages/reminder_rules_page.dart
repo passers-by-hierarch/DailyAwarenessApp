@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:collection/collection.dart';
 import '../../../../layouts/secondary_layout.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_icons.dart';
 import '../../../../core/models/app_models.dart';
 import '../../../../core/state/app_store.dart';
 
@@ -71,6 +73,16 @@ class ReminderRulesPage extends StatelessWidget {
                 _buildCustomReminderList(context),
                 const SizedBox(height: 16),
                 _buildAddCustomButton(context),
+                const SizedBox(height: 24),
+                _buildSectionTitle('必做事程管理'),
+                const SizedBox(height: 8),
+                _buildMustDoHint(),
+                const SizedBox(height: 12),
+                _buildMustDoSection(context, '短期必做', AgendaLevel.mustDoShort),
+                const SizedBox(height: 12),
+                _buildAddMustDoButton(context),
+                const SizedBox(height: 16),
+                _buildMustDoSection(context, '长期必做', AgendaLevel.mustDoLong),
                 const SizedBox(height: 24),
               ],
             ),
@@ -1012,6 +1024,559 @@ class ReminderRulesPage extends StatelessWidget {
           ),
           child: const Text('一键复原', style: TextStyle(fontSize: 14, color: AppColors.textPrimary, fontWeight: FontWeight.w500)),
         ),
+      ),
+    );
+  }
+
+  Widget _buildAddMustDoButton(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: OutlinedButton(
+        onPressed: () => _showAddMustDoDialog(context),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          side: const BorderSide(color: AppColors.accent, width: 2),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(AppIcons.plus, size: 20, color: AppColors.accent),
+            const SizedBox(width: 8),
+            const Text('添加必做事程', style: TextStyle(fontSize: 14, color: AppColors.accent, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAddMustDoDialog(BuildContext context) {
+    final contentCtrl = TextEditingController();
+    final timeCtrl = TextEditingController(text: '08:00');
+    AgendaLevel selectedLevel = AgendaLevel.mustDoShort;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('添加必做事程'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 8),
+              const Text('事程名称', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textSecondary)),
+              const SizedBox(height: 6),
+              TextField(
+                controller: contentCtrl,
+                decoration: const InputDecoration(
+                  hintText: '例如：吃药、锻炼',
+                  filled: true,
+                  fillColor: AppColors.bgTertiary,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text('提醒时间', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textSecondary)),
+              const SizedBox(height: 6),
+              TextField(
+                controller: timeCtrl,
+                keyboardType: TextInputType.datetime,
+                decoration: const InputDecoration(
+                  hintText: 'HH:mm',
+                  filled: true,
+                  fillColor: AppColors.bgTertiary,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text('必做级别', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textSecondary)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => selectedLevel = AgendaLevel.mustDoShort,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: selectedLevel == AgendaLevel.mustDoShort ? AppColors.accent : AppColors.bgTertiary,
+                        foregroundColor: selectedLevel == AgendaLevel.mustDoShort ? Colors.white : AppColors.textPrimary,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: const Text('短期必做'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => selectedLevel = AgendaLevel.mustDoLong,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: selectedLevel == AgendaLevel.mustDoLong ? AppColors.accent : AppColors.bgTertiary,
+                        foregroundColor: selectedLevel == AgendaLevel.mustDoLong ? Colors.white : AppColors.textPrimary,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: const Text('长期必做'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                '短期必做：提前30分钟提醒，重复5次\n长期必做：提前60分钟提醒，重复3次',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              final content = contentCtrl.text.trim();
+              final time = timeCtrl.text.trim();
+              if (content.isEmpty || time.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('请填写完整信息'), duration: Duration(seconds: 1)),
+                );
+                return;
+              }
+              final store = context.read<AppStore>();
+              final today = store.now;
+              final todayStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+              store.addAgenda(AgendaItem(
+                id: '',
+                content: content,
+                time: time,
+                date: todayStr,
+                isMustDo: true,
+                level: selectedLevel,
+                category: AgendaCategory.custom,
+                source: AgendaSource.user,
+              ));
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('已添加「$content」'), duration: Duration(seconds: 1)),
+              );
+            },
+            style: TextButton.styleFrom(foregroundColor: AppColors.accent),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMustDoHint() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.dangerLight.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber_outlined, size: 16, color: AppColors.danger),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '必做事程每天自动创建副本，连续完成达标可升级，连续失败达标需确认后降级',
+              style: TextStyle(fontSize: 13, color: AppColors.danger, fontWeight: FontWeight.w500),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMustDoSection(BuildContext context, String title, AgendaLevel level) {
+    final store = context.watch<AppStore>();
+    // 优先显示原始模板（category != dailyMustDo）
+    // 如果某个 content+time 没有模板但存在副本（数据不一致时），用当天副本兜底显示
+    final allMustDo = store.agendaItems
+        .where((a) => a.level == level && a.isMustDo)
+        .toList();
+
+    // 按 content+time 分组去重，每组优先取模板
+    final uniqueMap = <String, AgendaItem>{};
+    for (final a in allMustDo) {
+      final key = '${a.content}_${a.time}';
+      final existing = uniqueMap[key];
+      if (existing == null || a.category != AgendaCategory.dailyMustDo) {
+        uniqueMap[key] = a;
+      }
+    }
+    final items = uniqueMap.values.toList();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.bgSecondary,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: AppColors.cardShadow,
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.dangerLight,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(14),
+                topRight: Radius.circular(14),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(color: AppColors.danger, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 8),
+                Text(title, style: const TextStyle(fontSize: 14, color: AppColors.danger, fontWeight: FontWeight.w600)),
+                const Spacer(),
+                Text('${items.length}项', style: TextStyle(fontSize: 12, color: AppColors.danger.withOpacity(0.7))),
+              ],
+            ),
+          ),
+          if (items.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Text(
+                  '暂无${title}事程',
+                  style: const TextStyle(fontSize: 14, color: AppColors.textTertiary),
+                ),
+              ),
+            )
+          else
+            Column(
+              children: List.generate(items.length, (index) {
+                final item = items[index];
+                return Column(
+                  children: [
+                    if (index > 0) const Padding(
+                      padding: EdgeInsets.only(left: 16),
+                      child: Divider(height: 1, color: AppColors.border),
+                    ),
+                    _buildMustDoItem(context, item),
+                  ],
+                );
+              }),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMustDoItem(BuildContext context, AgendaItem item) {
+    final store = context.read<AppStore>();
+    final completionRate = _calculateCompletionRate(store, item);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Text(item.icon, style: const TextStyle(fontSize: 24)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.content,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14, color: AppColors.textPrimary, fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    _buildStatsBadge(
+                      '🔥 ${item.streak}天',
+                      item.streak >= 7 ? AppColors.success : AppColors.accent,
+                    ),
+                    const SizedBox(width: 6),
+                    _buildStatsBadge(
+                      '✅ ${completionRate}%',
+                      completionRate >= 80 ? AppColors.success : completionRate >= 50 ? AppColors.warning : AppColors.danger,
+                    ),
+                    if (item.failCount > 0) ...[
+                      const SizedBox(width: 6),
+                      _buildStatsBadge(
+                        '❌ ${item.failCount}次',
+                        AppColors.danger,
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          _buildMustDoActionButtons(context, item),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatsBadge(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w500),
+      ),
+    );
+  }
+
+  Widget _buildMustDoActionButtons(BuildContext context, AgendaItem item) {
+    return Row(
+      children: [
+        GestureDetector(
+          onTap: () => _togglePauseAgenda(context, item),
+          child: Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.warningLight,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              item.level == AgendaLevel.mustDoShort || item.level == AgendaLevel.mustDoLong
+                  ? Icons.pause_outlined
+                  : Icons.play_arrow_outlined,
+              size: 18,
+              color: AppColors.warning,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        GestureDetector(
+          onTap: () => _confirmDeleteMustDo(context, item),
+          child: Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.dangerLight,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.delete_outlined,
+              size: 18,
+              color: AppColors.danger,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 计算近 30 天的完成率
+  /// 通过 content+time 匹配历史副本（每日生成的 dailyMustDo 副本）
+  /// 排除原始模板本身（category != dailyMustDo）
+  int _calculateCompletionRate(AppStore store, AgendaItem template) {
+    final now = store.now;
+    final start = now.subtract(const Duration(days: 30));
+    final startStr = '${start.year}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')}';
+    final endStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+    final history = store.agendaItems.where((a) =>
+      a.content == template.content &&
+      a.time == template.time &&
+      a.date.compareTo(startStr) >= 0 &&
+      a.date.compareTo(endStr) <= 0
+    ).toList();
+
+    if (history.isEmpty) return 0;
+    final completed = history.where((a) => a.status == AgendaStatus.completed).length;
+    return ((completed / history.length) * 100).round().clamp(0, 100);
+  }
+
+  void _togglePauseAgenda(BuildContext context, AgendaItem item) {
+    final store = context.read<AppStore>();
+    final isPaused = !item.isMustDo;
+    // 如果当前 item 是副本，优先找到对应模板进行操作
+    final target = _findMustDoTemplate(store, item);
+
+    if (isPaused) {
+      store.updateAgenda(target.id, target.copyWith(
+        isMustDo: true,
+        status: AgendaStatus.pending,
+      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已恢复为必做事程'), duration: Duration(seconds: 1)),
+      );
+    } else {
+      _showPauseOptionsDialog(context, target);
+    }
+  }
+
+  /// 查找必做事程的模板。如果当前 item 是模板则返回自身；
+  /// 如果是副本且存在模板则返回模板；否则将副本作为临时模板返回。
+  AgendaItem _findMustDoTemplate(AppStore store, AgendaItem item) {
+    if (item.category != AgendaCategory.dailyMustDo) return item;
+    return store.agendaItems.firstWhereOrNull((a) =>
+      a.content == item.content &&
+      a.time == item.time &&
+      a.category != AgendaCategory.dailyMustDo
+    ) ?? item;
+  }
+
+  void _showPauseOptionsDialog(BuildContext context, AgendaItem template) {
+    String? selectedAction;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('暂停必做事程'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('确定要暂停「${template.content}」吗？'),
+              const SizedBox(height: 12),
+              const Text(
+                '暂停后，该事程将不再自动创建每日副本。\n\n请选择今日已生成副本的处理方式：',
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 16),
+              _buildRadioOption('keep', '保留不变', selectedAction),
+              const SizedBox(height: 8),
+              _buildRadioOption('complete', '标记为已完成', selectedAction),
+              const SizedBox(height: 8),
+              _buildRadioOption('skip', '标记为已跳过', selectedAction),
+              const SizedBox(height: 8),
+              _buildRadioOption('delete', '删除今日副本', selectedAction),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              _processPauseAction(context, template, selectedAction);
+              Navigator.pop(ctx);
+            },
+            style: TextButton.styleFrom(foregroundColor: AppColors.accent),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRadioOption(String value, String label, String? selectedValue) {
+    return Row(
+      children: [
+        Radio<String>(
+          value: value,
+          groupValue: selectedValue,
+          onChanged: (v) => selectedValue = v,
+          activeColor: AppColors.accent,
+        ),
+        Text(label, style: const TextStyle(fontSize: 14)),
+      ],
+    );
+  }
+
+  void _processPauseAction(BuildContext context, AgendaItem template, String? action) {
+    final store = context.read<AppStore>();
+
+    store.updateAgenda(template.id, template.copyWith(
+      level: AgendaLevel.important,
+      isMustDo: false,
+      failCount: 0,
+    ));
+
+    final today = store.now;
+    final todayStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final todayCopy = store.agendaItems.firstWhereOrNull((a) =>
+      a.content == template.content &&
+      a.time == template.time &&
+      a.date == todayStr &&
+      a.category == AgendaCategory.dailyMustDo
+    );
+
+    if (todayCopy != null && action != null && action != 'keep') {
+      switch (action) {
+        case 'complete':
+          store.completeAgenda(todayCopy.id);
+          break;
+        case 'skip':
+          store.skipAgenda(todayCopy.id);
+          break;
+        case 'delete':
+          store.deleteAgenda(todayCopy.id);
+          break;
+      }
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已暂停必做，改为重要级别'), duration: Duration(seconds: 1)),
+    );
+  }
+
+  void _confirmDeleteMustDo(BuildContext context, AgendaItem item) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除必做事程'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('确定要删除「${item.content}」吗？'),
+            const SizedBox(height: 8),
+            const Text(
+              '• 已生成的每日提醒副本会保留在历史记录中',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const Text(
+              '• 此操作将停止创建新的每日副本',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const Text(
+              '• 关联的库存记录会自动回滚',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              final store = context.read<AppStore>();
+              final target = _findMustDoTemplate(store, item);
+              store.deleteAgenda(target.id);
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('已删除「${item.content}」，历史副本已保留'), duration: Duration(seconds: 1)),
+              );
+            },
+            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+            child: const Text('删除'),
+          ),
+        ],
       ),
     );
   }

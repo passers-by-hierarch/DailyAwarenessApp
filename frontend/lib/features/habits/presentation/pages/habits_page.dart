@@ -16,6 +16,112 @@ class HabitsPage extends StatefulWidget {
   State<HabitsPage> createState() => _HabitsPageState();
 }
 
+/// 趋势线绘制器
+class _TrendLinePainter extends CustomPainter {
+  final List<double> rates;
+  final double avgRate;
+
+  _TrendLinePainter(this.rates, this.avgRate);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (rates.isEmpty) return;
+
+    final paint = Paint()
+      ..color = AppColors.accent
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    final fillPaint = Paint()
+      ..color = AppColors.accent.withOpacity(0.1)
+      ..style = PaintingStyle.fill;
+
+    final dotPaint = Paint()
+      ..color = AppColors.accent
+      ..style = PaintingStyle.fill;
+
+    final avgPaint = Paint()
+      ..color = AppColors.textTertiary
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+
+    final width = size.width;
+    final height = size.height;
+    final padding = 8.0;
+    final chartHeight = height - padding * 2;
+    final chartWidth = width - padding * 2;
+    final pointCount = rates.length;
+    final stepX = pointCount > 1 ? chartWidth / (pointCount - 1) : chartWidth / 2;
+
+    final path = Path();
+    final fillPath = Path();
+    final points = <Offset>[];
+
+    for (int i = 0; i < pointCount; i++) {
+      final x = padding + i * stepX;
+      final y = padding + chartHeight * (1 - rates[i]);
+      points.add(Offset(x, y));
+
+      if (i == 0) {
+        path.moveTo(x, y);
+        fillPath.moveTo(x, padding + chartHeight);
+        fillPath.lineTo(x, y);
+      } else {
+        path.lineTo(x, y);
+        fillPath.lineTo(x, y);
+      }
+    }
+
+    if (pointCount > 0) {
+      fillPath.lineTo(padding + (pointCount - 1) * stepX, padding + chartHeight);
+      fillPath.close();
+    }
+
+    // 绘制平均值虚线
+    final avgY = padding + chartHeight * (1 - avgRate);
+    const dashWidth = 4.0;
+    const dashSpace = 3.0;
+    double startX = padding;
+    while (startX < padding + chartWidth) {
+      canvas.drawLine(
+        Offset(startX, avgY),
+        Offset(startX + dashWidth, avgY),
+        avgPaint,
+      );
+      startX += dashWidth + dashSpace;
+    }
+
+    // 绘制填充区域
+    canvas.drawPath(fillPath, fillPaint);
+
+    // 绘制折线（单点时绘制一条垂直线）
+    if (pointCount == 1) {
+      final x = padding + stepX;
+      final y = padding + chartHeight * (1 - rates[0]);
+      canvas.drawLine(
+        Offset(x, padding),
+        Offset(x, padding + chartHeight),
+        Paint()..color = AppColors.accent.withOpacity(0.3),
+      );
+    } else {
+      canvas.drawPath(path, paint);
+    }
+
+    // 绘制数据点
+    for (final point in points) {
+      canvas.drawCircle(point, 3, dotPaint);
+      canvas.drawCircle(point, 5, Paint()..color = AppColors.accent.withOpacity(0.3));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrendLinePainter oldDelegate) {
+    return rates != oldDelegate.rates || avgRate != oldDelegate.avgRate;
+  }
+}
+
 class _HabitsPageState extends State<HabitsPage> {
   String _range = 'week'; // today/week/month/custom
   AgendaLevel? _selectedLevel; // null = 全部
@@ -23,11 +129,16 @@ class _HabitsPageState extends State<HabitsPage> {
   DateTime? _customEnd;
   final Set<String> _dismissedSuggestions = {}; // 已忽略的建议ID
   final Set<String> _acceptedSuggestions = {}; // 已采纳的建议ID
+  int _heatmapStartIndex = 0; // 热力图显示的起始索引
+  int _viewDayCount = 7; // 每次显示的天数
+  String? _expandedLevelKey; // 展开的级别key
+  String _rankingSortBy = 'score'; // 排序方式：score/rate/streak/total
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<AppStore>();
     final stats = _computeStats(store);
+    final trendData = store.getCompletionTrend(_range, customStart: _customStart, customEnd: _customEnd, level: _selectedLevel);
 
     return Container(
       color: AppColors.bgPrimary,
@@ -78,10 +189,7 @@ class _HabitsPageState extends State<HabitsPage> {
                 _buildUserProfileCard(store),
                 const SizedBox(height: 12),
                 // 核心指标卡
-                _buildCompletionCard(stats.completionRate, store),
-                const SizedBox(height: 12),
-                // 完成趋势
-                _buildCompletionTrend(store),
+                _buildCompletionCard(stats.completionRate, store, trendData),
                 const SizedBox(height: 12),
                 // 事程排行
                 _buildBehaviorRanking(store),
@@ -190,7 +298,11 @@ class _HabitsPageState extends State<HabitsPage> {
         if (key == 'custom') {
           _showCustomDatePicker();
         } else {
-          setState(() => _range = key);
+          setState(() {
+            _range = key;
+            _heatmapStartIndex = 0;
+            _expandedLevelKey = null;
+          });
         }
       },
       child: Container(
@@ -257,6 +369,8 @@ class _HabitsPageState extends State<HabitsPage> {
       _range = 'custom';
       _customStart = pickedStart;
       _customEnd = pickedEnd;
+      _heatmapStartIndex = 0;
+      _expandedLevelKey = null;
     });
   }
 
@@ -292,9 +406,21 @@ class _HabitsPageState extends State<HabitsPage> {
   }
 
   // 核心指标卡（4.3.3）
-  Widget _buildCompletionCard(int rate, AppStore store) {
-    final trendData = store.getCompletionTrend(_range, customStart: _customStart, customEnd: _customEnd, level: _selectedLevel);
-    final displayData = trendData.length > 7 ? trendData.sublist(trendData.length - 7) : trendData;
+  Widget _buildCompletionCard(int rate, AppStore store, List<Map<String, dynamic>> trendData) {
+    final totalDayCount = trendData.length;
+    final viewDayCount = _viewDayCount;
+    final maxStartIndex = totalDayCount > viewDayCount ? totalDayCount - viewDayCount : 0;
+    final clampedStartIndex = _heatmapStartIndex.clamp(0, maxStartIndex);
+    if (clampedStartIndex != _heatmapStartIndex) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() => _heatmapStartIndex = clampedStartIndex);
+        }
+      });
+    }
+    final displayData = totalDayCount > viewDayCount
+        ? trendData.sublist(clampedStartIndex, clampedStartIndex + viewDayCount)
+        : trendData;
     final displayLabels = displayData.map((d) => d['label'] as String).toList();
 
     // 5种状态配置（从上到下显示）
@@ -324,6 +450,30 @@ class _HabitsPageState extends State<HabitsPage> {
         final c = day[cfg['key']] as int;
         if (c > maxCount) maxCount = c;
       }
+    }
+
+    // 计算与上周对比
+    int lastWeekRate = 0;
+    int weekDiff = 0;
+    if (_range == 'week' || _range == 'today') {
+      final now = DateTime.now();
+      final lastWeekStart = DateTime(now.year, now.month, now.day)
+          .subtract(Duration(days: now.weekday - 1 + 7));
+      final lastWeekEnd = lastWeekStart.add(const Duration(days: 6));
+      final lastWeekData = store.getCompletionTrend(
+        'custom',
+        customStart: lastWeekStart,
+        customEnd: lastWeekEnd,
+        level: _selectedLevel,
+      );
+      int lastTotal = 0;
+      int lastCompleted = 0;
+      for (final day in lastWeekData) {
+        lastTotal += day['total'] as int;
+        lastCompleted += day['completed'] as int;
+      }
+      lastWeekRate = lastTotal > 0 ? (lastCompleted / lastTotal * 100).round() : 0;
+      weekDiff = rate - lastWeekRate;
     }
 
     return Container(
@@ -361,13 +511,28 @@ class _HabitsPageState extends State<HabitsPage> {
                             color: AppColors.accent,
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        const Icon(Icons.arrow_upward, size: 12, color: AppColors.success),
-                        const SizedBox(width: 2),
-                        const Text(
-                          '5%',
-                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.success),
-                        ),
+                        if (_range == 'week' || _range == 'today') ...[
+                          const SizedBox(width: 6),
+                          Icon(
+                            weekDiff >= 0 ? Icons.arrow_upward : Icons.arrow_downward,
+                            size: 12,
+                            color: weekDiff >= 0 ? AppColors.success : AppColors.danger,
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            '${weekDiff >= 0 ? '+' : ''}$weekDiff%',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: weekDiff >= 0 ? AppColors.success : AppColors.danger,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'vs上周',
+                            style: const TextStyle(fontSize: 10, color: AppColors.textTertiary),
+                          ),
+                        ],
                       ],
                     ),
                   ],
@@ -378,30 +543,42 @@ class _HabitsPageState extends State<HabitsPage> {
           ),
           const SizedBox(height: 16),
           // 第二部分：事程热力图
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                '事程热力图',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textSecondary,
+          if (totalDayCount == 0)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Text(
+                  '暂无数据，添加事程开始记录吧',
+                  style: TextStyle(fontSize: 13, color: AppColors.textTertiary),
                 ),
               ),
-              // 图例放在右上
-              Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                children: statusConfigs.map((cfg) => _buildLegendItem(
-                  cfg['color'] as Color, cfg['label'] as String,
-                )).toList(),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          // 网格热力图：纵轴5种状态，横轴日期
-          LayoutBuilder(
+            )
+          else
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  '事程热力图',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                // 图例放在右上
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: statusConfigs.map((cfg) => _buildLegendItem(
+                    cfg['color'] as Color, cfg['label'] as String,
+                  )).toList(),
+                ),
+              ],
+            ),
+          if (totalDayCount > 0) ...[
+            const SizedBox(height: 12),
+            // 网格热力图：纵轴5种状态，横轴日期
+            LayoutBuilder(
             builder: (context, constraints) {
               final availableWidth = constraints.maxWidth - 48;
               final columnCount = displayLabels.length;
@@ -413,22 +590,39 @@ class _HabitsPageState extends State<HabitsPage> {
                   SizedBox(
                     width: 48,
                     child: Column(
-                      children: statusConfigs.map((cfg) {
-                        return SizedBox(
-                          height: 24,
+                      children: [
+                        // 总数标签
+                        const SizedBox(
+                          height: 20,
                           child: Align(
                             alignment: Alignment.centerLeft,
                             child: Text(
-                              cfg['label'] as String,
+                              '总数',
                               style: TextStyle(
                                 fontSize: 10,
-                                color: cfg['textColor'] as Color,
+                                color: AppColors.textSecondary,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
                           ),
-                        );
-                      }).toList(),
+                        ),
+                        ...statusConfigs.map((cfg) {
+                          return SizedBox(
+                            height: 24,
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                cfg['label'] as String,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: cfg['textColor'] as Color,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ],
                     ),
                   ),
                   Expanded(
@@ -438,16 +632,46 @@ class _HabitsPageState extends State<HabitsPage> {
                         final idx = entry.key;
                         final label = entry.value;
                         final dayData = displayData[idx];
+                        final dayTotal = statusConfigs.fold<int>(0, (sum, cfg) => sum + (dayData[cfg['key']] as int));
+                        final dayCompleted = dayData['completed'] as int;
+                        final dayRate = dayTotal > 0 ? (dayCompleted / dayTotal * 100).round() : 0;
+                        final dateStr = dayData['date'] as String;
+                        final dateParts = dateStr.split('-');
+                        final date = DateTime(int.parse(dateParts[0]), int.parse(dateParts[1]), int.parse(dateParts[2]));
+                        final isWeekend = date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
                         return Expanded(
-                          child: Container(
-                            margin: idx < columnCount - 1 ? const EdgeInsets.only(right: 2) : null,
-                            child: Column(
-                              children: [
-                                ...statusConfigs.map((cfg) {
+                          child: GestureDetector(
+                            onTap: () => _showDayDetail(dayData, label),
+                            child: Container(
+                              margin: idx < columnCount - 1 ? const EdgeInsets.only(right: 2) : null,
+                              decoration: isWeekend
+                                  ? BoxDecoration(
+                                      color: AppColors.accent.withOpacity(0.05),
+                                      borderRadius: BorderRadius.circular(4),
+                                    )
+                                  : null,
+                              child: Column(
+                                children: [
+                                  // 每日总数
+                                  SizedBox(
+                                    height: 20,
+                                    child: Center(
+                                      child: Text(
+                                        '$dayTotal',
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.textSecondary,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  ...statusConfigs.map((cfg) {
                                   final count = dayData[cfg['key']] as int;
                                   final baseColor = cfg['color'] as Color;
+                                  final intensity = maxCount > 0 ? (count / maxCount).clamp(0.0, 1.0) : 0.0;
                                   final cellColor = count > 0
-                                      ? baseColor
+                                      ? baseColor.withOpacity(0.3 + intensity * 0.7)
                                       : AppColors.bgTertiary.withOpacity(0.3);
                                   return Tooltip(
                                     message: '${cfg['label']}: $count',
@@ -465,7 +689,7 @@ class _HabitsPageState extends State<HabitsPage> {
                                                 style: TextStyle(
                                                   fontSize: 9,
                                                   fontWeight: FontWeight.w600,
-                                                  color: _needsLightText(baseColor)
+                                                  color: intensity > 0.5
                                                       ? Colors.white
                                                       : AppColors.textPrimary,
                                                 ),
@@ -483,7 +707,8 @@ class _HabitsPageState extends State<HabitsPage> {
                               ],
                             ),
                           ),
-                        );
+                        ),
+                      );
                       }).toList(),
                     ),
                   ),
@@ -491,6 +716,15 @@ class _HabitsPageState extends State<HabitsPage> {
               );
             },
           ),
+          ],
+          // 完成率趋势线
+          const SizedBox(height: 12),
+          _buildTrendLine(displayData),
+          // 日期拖动栏
+          if (totalDayCount > viewDayCount) ...[
+            const SizedBox(height: 8),
+            _buildDateSlider(totalDayCount, viewDayCount),
+          ],
           // 完成细分统计：按时完成 / 延期完成 / 跳过后完成
           if (totalCompleted > 0) ...[
             const SizedBox(height: 16),
@@ -548,6 +782,587 @@ class _HabitsPageState extends State<HabitsPage> {
     );
   }
 
+  /// 完成率趋势线
+  Widget _buildTrendLine(List<Map<String, dynamic>> data) {
+    final rates = data.map<double>((d) {
+      final total = d['total'] as int;
+      final completed = d['completed'] as int;
+      return total > 0 ? completed / total : 0.0;
+    }).toList();
+
+    if (rates.isEmpty) return const SizedBox.shrink();
+
+    final avgRate = rates.reduce((a, b) => a + b) / rates.length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '完成率趋势',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.textSecondary),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 60,
+          child: CustomPaint(
+            painter: _TrendLinePainter(rates, avgRate),
+            size: Size.infinite,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              '平均 ${(avgRate * 100).round()}%',
+              style: const TextStyle(fontSize: 10, color: AppColors.textTertiary),
+            ),
+            Text(
+              '最高 ${(rates.reduce((a, b) => a > b ? a : b) * 100).round()}%',
+              style: const TextStyle(fontSize: 10, color: AppColors.textTertiary),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 生成日期刻度
+  Widget _buildDateTicks(int totalDays) {
+    final now = DateTime.now();
+    DateTime startDate;
+    
+    switch (_range) {
+      case 'today':
+        startDate = DateTime(now.year, now.month, now.day);
+        break;
+      case 'week':
+        startDate = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
+        break;
+      case 'month':
+        startDate = DateTime(now.year, now.month, 1);
+        break;
+      case 'custom':
+        startDate = _customStart ?? DateTime(now.year, now.month, now.day);
+        break;
+      default:
+        startDate = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 6));
+    }
+
+    final ticks = <Widget>[];
+    for (int i = 0; i <= 4; i++) {
+      final dayOffset = (i / 4 * (totalDays - 1)).round();
+      final date = startDate.add(Duration(days: dayOffset));
+      ticks.add(
+        Expanded(
+          child: Center(
+            child: Text(
+              '${date.month}/${date.day}',
+              style: const TextStyle(fontSize: 9, color: AppColors.textTertiary),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(children: ticks);
+  }
+
+  /// 显示单日详情弹窗
+  void _showDayDetail(Map<String, dynamic> dayData, String label) {
+    final statusConfigs = [
+      {'key': 'pending', 'label': '待进行', 'color': AppColors.bgTertiary, 'textColor': AppColors.textSecondary},
+      {'key': 'completed', 'label': '已完成', 'color': AppColors.success, 'textColor': AppColors.success},
+      {'key': 'skipped', 'label': '已跳过', 'color': AppColors.textTertiary, 'textColor': AppColors.textTertiary},
+      {'key': 'postponed', 'label': '已延后', 'color': AppColors.warning, 'textColor': AppColors.warning},
+      {'key': 'expired', 'label': '已过期', 'color': AppColors.danger, 'textColor': AppColors.danger},
+    ];
+
+    final total = statusConfigs.fold<int>(0, (sum, cfg) => sum + (dayData[cfg['key']] as int));
+    final completed = dayData['completed'] as int;
+    final rate = total > 0 ? (completed / total * 100).round() : 0;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: AppColors.bgPrimary,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 标题
+            Row(
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.accent.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '完成率 $rate%',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.accent,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // 总数
+            Text(
+              '总计 $total 项事程',
+              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 16),
+            // 各状态详情
+            ...statusConfigs.map((cfg) {
+              final count = dayData[cfg['key']] as int;
+              final percent = total > 0 ? (count / total * 100).round() : 0;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: cfg['color'] as Color,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      cfg['label'] as String,
+                      style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '$count项',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: cfg['textColor'] as Color,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$percent%',
+                      style: const TextStyle(fontSize: 12, color: AppColors.textTertiary),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 显示天数选择弹窗
+  void _showViewDayOptions() {
+    final options = [3, 7, 14];
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: AppColors.bgPrimary,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              '选择显示天数',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            ...options.map((days) => GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _viewDayCount = days;
+                      _heatmapStartIndex = 0;
+                    });
+                    Navigator.pop(context);
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: _viewDayCount == days ? AppColors.accent : AppColors.bgTertiary,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Text(
+                          '$days天',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: _viewDayCount == days ? Colors.white : AppColors.textPrimary,
+                            fontWeight: _viewDayCount == days ? FontWeight.w600 : FontWeight.normal,
+                          ),
+                        ),
+                        const Spacer(),
+                        if (_viewDayCount == days)
+                          const Icon(Icons.check, size: 18, color: Colors.white),
+                      ],
+                    ),
+                  ),
+                )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 获取当前范围的起止日期
+  List<DateTime> _getCurrentDateRange(int totalDays) {
+    final now = DateTime.now();
+    DateTime startDate;
+
+    switch (_range) {
+      case 'today':
+        startDate = DateTime(now.year, now.month, now.day);
+        break;
+      case 'week':
+        startDate = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
+        break;
+      case 'month':
+        startDate = DateTime(now.year, now.month, 1);
+        break;
+      case 'custom':
+        startDate = _customStart ?? DateTime(now.year, now.month, now.day);
+        break;
+      default:
+        startDate = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 6));
+    }
+
+    final currentStart = startDate.add(Duration(days: _heatmapStartIndex));
+    final currentEnd = startDate.add(Duration(days: _heatmapStartIndex + (totalDays > _viewDayCount ? _viewDayCount - 1 : totalDays - 1)));
+    return [currentStart, currentEnd];
+  }
+
+  /// 获取今天在总范围中的索引
+  int _getTodayIndex(int totalDays) {
+    final now = DateTime.now();
+    DateTime startDate;
+
+    switch (_range) {
+      case 'today':
+        startDate = DateTime(now.year, now.month, now.day);
+        break;
+      case 'week':
+        startDate = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
+        break;
+      case 'month':
+        startDate = DateTime(now.year, now.month, 1);
+        break;
+      case 'custom':
+        startDate = _customStart ?? DateTime(now.year, now.month, now.day);
+        break;
+      default:
+        startDate = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 6));
+    }
+
+    final today = DateTime(now.year, now.month, now.day);
+    final diff = today.difference(startDate).inDays;
+    return diff.clamp(0, totalDays - 1);
+  }
+
+  /// 日期拖动栏
+  Widget _buildDateSlider(int totalDays, int viewDays) {
+    final maxIndex = totalDays - viewDays;
+    final position = maxIndex > 0 ? _heatmapStartIndex / maxIndex : 0.0;
+    final canGoLeft = _heatmapStartIndex > 0;
+    final canGoRight = _heatmapStartIndex < maxIndex;
+    final dateRange = _getCurrentDateRange(totalDays);
+    final todayIndex = _getTodayIndex(totalDays);
+    final todayPosition = todayIndex / (totalDays - 1);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        children: [
+          // 显示天数切换 + 当前日期范围 + 今天按钮
+          Row(
+            children: [
+              // 显示天数切换
+              GestureDetector(
+                onTap: () => _showViewDayOptions(),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.bgTertiary,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${_viewDayCount}天',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const Icon(
+                        Icons.expand_more,
+                        size: 14,
+                        color: AppColors.textTertiary,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    '${dateRange[0].month}/${dateRange[0].day} - ${dateRange[1].month}/${dateRange[1].day}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+              // 今天按钮
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    final targetIndex = (todayIndex - viewDays ~/ 2).clamp(0, maxIndex);
+                    _heatmapStartIndex = targetIndex;
+                  });
+                },
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: AppColors.success,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.today,
+                    size: 14,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // 左右箭头 + 拖动条
+          Row(
+            children: [
+              // 左箭头
+              GestureDetector(
+                onTap: canGoLeft
+                    ? () => setState(() {
+                          _heatmapStartIndex = (_heatmapStartIndex - viewDays).clamp(0, maxIndex);
+                        })
+                    : null,
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: canGoLeft ? AppColors.accent : AppColors.bgTertiary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.chevron_left,
+                    size: 16,
+                    color: canGoLeft ? Colors.white : AppColors.textTertiary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // 拖动条
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final trackWidth = constraints.maxWidth;
+                    final sliderWidth = trackWidth * (viewDays / totalDays);
+                    final sliderLeft = position * (trackWidth - sliderWidth);
+                    final todayLeft = todayPosition * trackWidth;
+
+                    return Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        // 背景轨道
+                        Container(
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: AppColors.bgTertiary,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                        // 今天位置标记
+                        Positioned(
+                          left: todayLeft - 1,
+                          top: -4,
+                          child: Container(
+                            width: 2,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: AppColors.success,
+                              borderRadius: BorderRadius.circular(1),
+                            ),
+                          ),
+                        ),
+                        // 滑块轨道（可点击跳转）
+                        GestureDetector(
+                          onTapUp: (details) {
+                            final tapPosition = details.localPosition.dx;
+                            final tapRatio = tapPosition / trackWidth;
+                            final targetIndex = (tapRatio * maxIndex).round().clamp(0, maxIndex);
+                            setState(() => _heatmapStartIndex = targetIndex);
+                          },
+                          child: Container(
+                            height: 24,
+                            color: Colors.transparent,
+                          ),
+                        ),
+                        // 当前范围滑块
+                        Positioned(
+                          left: sliderLeft,
+                          child: GestureDetector(
+                            onHorizontalDragUpdate: (details) {
+                              setState(() {
+                                final deltaIndex = (details.delta.dx / (trackWidth - sliderWidth) * maxIndex).round();
+                                _heatmapStartIndex = (_heatmapStartIndex + deltaIndex).clamp(0, maxIndex);
+                              });
+                            },
+                            child: Container(
+                              width: sliderWidth,
+                              height: 24,
+                              alignment: Alignment.center,
+                              child: Container(
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  color: AppColors.accent,
+                                  borderRadius: BorderRadius.circular(5),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: AppColors.accent.withOpacity(0.3),
+                                      blurRadius: 4,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        // 左把手
+                        Positioned(
+                          left: sliderLeft - 4,
+                          child: GestureDetector(
+                            onHorizontalDragUpdate: (details) {
+                              setState(() {
+                                final deltaIndex = (details.delta.dx / (trackWidth - sliderWidth) * maxIndex).round();
+                                _heatmapStartIndex = (_heatmapStartIndex + deltaIndex).clamp(0, maxIndex);
+                              });
+                            },
+                            child: Container(
+                              width: 16,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: AppColors.accent, width: 3),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.1),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 1),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        // 右把手
+                        Positioned(
+                          left: sliderLeft + sliderWidth - 12,
+                          child: GestureDetector(
+                            onHorizontalDragUpdate: (details) {
+                              setState(() {
+                                final deltaIndex = (details.delta.dx / (trackWidth - sliderWidth) * maxIndex).round();
+                                _heatmapStartIndex = (_heatmapStartIndex + deltaIndex).clamp(0, maxIndex);
+                              });
+                            },
+                            child: Container(
+                              width: 16,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: AppColors.accent, width: 3),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.1),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 1),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              // 右箭头
+              GestureDetector(
+                onTap: canGoRight
+                    ? () => setState(() {
+                          _heatmapStartIndex = (_heatmapStartIndex + viewDays).clamp(0, maxIndex);
+                        })
+                    : null,
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: canGoRight ? AppColors.accent : AppColors.bgTertiary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.chevron_right,
+                    size: 16,
+                    color: canGoRight ? Colors.white : AppColors.textTertiary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // 刻度标记
+          _buildDateTicks(totalDays),
+        ],
+      ),
+    );
+  }
+
   /// 完成质量细分项
   Widget _buildCompletionQualityItem(String label, int count, int total, Color color) {
     final percent = total > 0 ? (count / total * 100).round() : 0;
@@ -590,8 +1405,9 @@ class _HabitsPageState extends State<HabitsPage> {
     final levels = [
       {'value': null, 'label': '全部', 'color': AppColors.textPrimary},
       {'value': AgendaLevel.normal, 'label': '普通', 'color': AppColors.accent},
+      {'value': AgendaLevel.important, 'label': '重要', 'color': AppColors.warning},
       {'value': AgendaLevel.mustDoShort, 'label': '短必做', 'color': AppColors.danger},
-      {'value': AgendaLevel.mustDoLong, 'label': '长必做', 'color': AppColors.warning},
+      {'value': AgendaLevel.mustDoLong, 'label': '长必做', 'color': AppColors.danger},
     ];
     return Wrap(
       spacing: 4,
@@ -599,7 +1415,11 @@ class _HabitsPageState extends State<HabitsPage> {
       children: levels.map((lv) {
         final selected = _selectedLevel == lv['value'];
         return GestureDetector(
-          onTap: () => setState(() => _selectedLevel = lv['value'] as AgendaLevel?),
+          onTap: () => setState(() {
+            _selectedLevel = lv['value'] as AgendaLevel?;
+            _heatmapStartIndex = 0;
+            _expandedLevelKey = null;
+          }),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
@@ -645,214 +1465,7 @@ class _HabitsPageState extends State<HabitsPage> {
     }
   }
 
-  Color _getStatusColor(int status) {
-    switch (status) {
-      case -1: return Colors.transparent;
-      case 0: return AppColors.bgTertiary;
-      case 1: return AppColors.success;
-      case 2: return AppColors.textTertiary;
-      case 3: return AppColors.warning;
-      case 4: return AppColors.danger;
-      default: return AppColors.bgTertiary;
-    }
-  }
-
-  String _getStatusLabel(int status) {
-    switch (status) {
-      case -1: return '无事程';
-      case 0: return '待进行';
-      case 1: return '已完成';
-      case 2: return '已跳过';
-      case 3: return '已延后';
-      case 4: return '已过期';
-      default: return '未知';
-    }
-  }
-
-  // 事程热力图（4.3.4）- 按级别分组，行高根据事程数量调整
-  Widget _buildHeatmap(AppStore store) {
-    final heatmapData = store.getAgendaHeatmap(_range, customStart: _customStart, customEnd: _customEnd, level: _selectedLevel);
-    final labels = heatmapData['labels'] as List<String>;
-    final data = heatmapData['data'] as List<List<int>>;
-    final levels = heatmapData['levels'] as List<AgendaLevel>;
-    final counts = heatmapData['counts'] as List<int>;
-    final dayCount = heatmapData['dayCount'] as int;
-
-    final cellSize = dayCount <= 7 ? 28.0 : (dayCount <= 14 ? 22.0 : 16.0);
-    final fontSize = dayCount <= 7 ? 12.0 : (dayCount <= 14 ? 10.0 : 9.0);
-    const labelColumnWidth = 100.0;
-
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.bgSecondary,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: AppColors.accent,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                '事程热力图',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              _buildLegendItem(AppColors.bgTertiary, '待进行'),
-              const SizedBox(width: 12),
-              _buildLegendItem(AppColors.success, '已完成'),
-              const SizedBox(width: 12),
-              _buildLegendItem(AppColors.textTertiary, '已跳过'),
-              const SizedBox(width: 12),
-              _buildLegendItem(AppColors.warning, '已延后'),
-              const SizedBox(width: 12),
-              _buildLegendItem(AppColors.danger, '已过期'),
-            ],
-          ),
-          const SizedBox(height: 8),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: labelColumnWidth,
-                  child: Column(
-                    children: [
-                      SizedBox(height: fontSize + 4),
-                      ...List.generate(levels.length, (index) {
-                        final level = levels[index];
-                        final count = counts[index];
-                        final levelColor = _getLevelColor(level);
-                        final levelLabel = _getLevelLabel(level);
-                        final rowHeight = (cellSize + 4) * (count > 0 ? count : 1);
-                        return SizedBox(
-                          height: rowHeight,
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 4,
-                                height: rowHeight * 0.6,
-                                decoration: BoxDecoration(
-                                  color: levelColor,
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      levelLabel,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: fontSize - 1,
-                                        fontWeight: FontWeight.w600,
-                                        color: AppColors.textPrimary,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      '$count项',
-                                      style: TextStyle(
-                                        fontSize: fontSize - 2,
-                                        color: AppColors.textTertiary,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
-                    ],
-                  ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      height: fontSize + 4,
-                      child: Row(
-                        children: labels.asMap().entries.map((entry) {
-                          final idx = entry.key;
-                          final label = entry.value;
-                          final shouldShow = dayCount <= 7 ||
-                              (dayCount <= 14 && idx % 2 == 0) ||
-                              (dayCount > 14 && (idx % 5 == 0 || idx == labels.length - 1));
-                          return SizedBox(
-                            width: cellSize,
-                            child: Center(
-                              child: Text(
-                                shouldShow ? label : '',
-                                style: TextStyle(
-                                  fontSize: fontSize - 2,
-                                  color: AppColors.textTertiary,
-                                ),
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                    ...List.generate(levels.length, (row) {
-                      final count = counts[row];
-                      final rowHeight = (cellSize + 4) * (count > 0 ? count : 1);
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 2),
-                        child: Row(
-                          children: List.generate(dayCount, (col) {
-                            final status = data[row][col];
-                            final statusColor = _getStatusColor(status);
-                            return Tooltip(
-                              message: _getStatusLabel(status),
-                              child: Container(
-                                width: cellSize,
-                                height: rowHeight,
-                                padding: const EdgeInsets.all(1.5),
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: statusColor,
-                                    borderRadius: BorderRadius.circular(3),
-                                  ),
-                                ),
-                              ),
-                            );
-                          }),
-                        ),
-                      );
-                    }),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  
 
   Widget _buildLegendItem(Color color, String label) {
     return Row(
@@ -877,19 +1490,58 @@ class _HabitsPageState extends State<HabitsPage> {
 
   String? _findAgendaIdByContent(AppStore store, String content) {
     try {
-      final agenda = store.agendaItems.firstWhere((a) => a.content == content);
-      return agenda.id;
+      final templates = store.agendaItems
+          .where((a) => a.content == content && a.category != AgendaCategory.dailyMustDo)
+          .toList();
+      if (templates.isNotEmpty) {
+        if (templates.length == 1) return templates.first.id;
+        templates.sort((a, b) => b.streak.compareTo(a.streak));
+        return templates.first.id;
+      }
+      final copies = store.agendaItems.where((a) => a.content == content).toList();
+      if (copies.isNotEmpty) {
+        if (copies.length == 1) return copies.first.id;
+        copies.sort((a, b) => b.streak.compareTo(a.streak));
+        return copies.first.id;
+      }
+      return null;
     } catch (_) {
       return null;
     }
   }
 
-  Widget _buildRankingItem(Map<String, dynamic> item, AppStore store) {
+  Widget _buildSortChip(String key, String label) {
+    final active = _rankingSortBy == key;
+    return GestureDetector(
+      onTap: () => setState(() {
+        _rankingSortBy = key;
+        _expandedLevelKey = null;
+      }),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: active ? AppColors.accent : AppColors.bgTertiary,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+            color: active ? Colors.white : AppColors.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRankingItem(Map<String, dynamic> item, AppStore store, {int? rank}) {
     final content = item['content'] as String;
     final streak = item['streak'] as int;
     final rate = item['rate'] as int;
     final completed = item['completed'] as int;
     final total = item['total'] as int;
+    final level = item['level'] as AgendaLevel?;
 
     return GestureDetector(
       onTap: () {
@@ -908,21 +1560,80 @@ class _HabitsPageState extends State<HabitsPage> {
         ),
         child: Row(
           children: [
+            // 排名标识
+            if (rank != null) ...[
+              Container(
+                width: 24,
+                height: 24,
+                margin: const EdgeInsets.only(right: 10),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: rank == 1 ? const Color(0xFFFFD700) :
+                         rank == 2 ? const Color(0xFFC0C0C0) :
+                         rank == 3 ? const Color(0xFFCD7F32) :
+                         AppColors.bgTertiary,
+                ),
+                child: Center(
+                  child: rank <= 3
+                      ? Text(
+                          '$rank',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black87,
+                          ),
+                        )
+                      : Text(
+                          '$rank',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                ),
+              ),
+            ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    content,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
+                  // 级别标签 + 事程名称
+                  Row(
+                    children: [
+                      if (level != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          margin: const EdgeInsets.only(right: 6),
+                          decoration: BoxDecoration(
+                            color: _getLevelColor(level).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            _getLevelLabel(level),
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                              color: _getLevelColor(level),
+                            ),
+                          ),
+                        ),
+                      Expanded(
+                        child: Text(
+                          content,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 4),
+                  // 第一行：连续天数 + 完成率进度条
                   Row(
                     children: [
                       const Text('🔥', style: TextStyle(fontSize: 12)),
@@ -935,22 +1646,41 @@ class _HabitsPageState extends State<HabitsPage> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: AppColors.successLight,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          '$rate%',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.success,
+                      Expanded(
+                        child: Container(
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: AppColors.bgTertiary,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: FractionallySizedBox(
+                            widthFactor: rate / 100,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: rate >= 90 ? AppColors.success :
+                                       rate >= 60 ? AppColors.accent : AppColors.warning,
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
+                      Text(
+                        '$rate%',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: rate >= 90 ? AppColors.success :
+                                 rate >= 60 ? AppColors.accent : AppColors.warning,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  // 第二行：完成数
+                  Row(
+                    children: [
                       Text(
                         '$completed/$total',
                         style: const TextStyle(
@@ -959,12 +1689,13 @@ class _HabitsPageState extends State<HabitsPage> {
                           color: AppColors.textTertiary,
                         ),
                       ),
+                      const Spacer(),
+                      const Icon(Icons.chevron_right, size: 16, color: AppColors.textTertiary),
                     ],
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, size: 16, color: AppColors.textTertiary),
           ],
         ),
       ),
@@ -973,7 +1704,7 @@ class _HabitsPageState extends State<HabitsPage> {
 
   // 事程排行（4.3.5）- 按级别分组
   Widget _buildBehaviorRanking(AppStore store) {
-    final rankingByLevel = store.getAgendaRankingByLevel(_range, customStart: _customStart, customEnd: _customEnd);
+    final rankingByLevel = store.getAgendaRankingByLevel(_range, customStart: _customStart, customEnd: _customEnd, sortBy: _rankingSortBy);
 
     final levelConfigs = [
       {'key': 'mustDoLong', 'label': '长期必做', 'color': AppColors.danger},
@@ -1016,6 +1747,19 @@ class _HabitsPageState extends State<HabitsPage> {
                   color: AppColors.textSecondary,
                 ),
               ),
+              const Spacer(),
+              // 排序方式切换
+              Row(
+                children: [
+                  _buildSortChip('score', '综合'),
+                  const SizedBox(width: 4),
+                  _buildSortChip('rate', '完成率'),
+                  const SizedBox(width: 4),
+                  _buildSortChip('streak', '连续'),
+                  const SizedBox(width: 4),
+                  _buildSortChip('total', '总数'),
+                ],
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -1038,7 +1782,7 @@ class _HabitsPageState extends State<HabitsPage> {
               final label = config['label'] as String;
               final color = config['color'] as Color;
               final list = (rankingByLevel[key] as List).cast<Map<String, dynamic>>();
-              final top3 = list.take(3).toList();
+              final displayList = list.take(list.length > 3 ? 3 : list.length).toList();
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1054,152 +1798,50 @@ class _HabitsPageState extends State<HabitsPage> {
                       ),
                     ),
                   ),
-                  ...top3.map((item) => _buildRankingItem(item, store)),
+                  ...displayList.asMap().entries.map((entry) =>
+                    _buildRankingItem(entry.value, store, rank: entry.key + 1)),
+                  if (list.length > 3) ...[
+                    const SizedBox(height: 4),
+                    GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _expandedLevelKey = _expandedLevelKey == key ? null : key;
+                        });
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              _expandedLevelKey == key ? '收起' : '查看更多',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.accent,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Icon(
+                              _expandedLevelKey == key
+                                  ? Icons.expand_less
+                                  : Icons.expand_more,
+                              size: 14,
+                              color: AppColors.accent,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (_expandedLevelKey == key) ...[
+                    ...list.sublist(3).asMap().entries.map((entry) =>
+                      _buildRankingItem(entry.value, store, rank: entry.key + 4)),
+                    const SizedBox(height: 4),
+                  ],
                   const SizedBox(height: 4),
                 ],
               );
             }),
-        ],
-      ),
-    );
-  }
-
-  Color _getTrendBarColor(int rate) {
-    if (_selectedLevel != null) {
-      return _getLevelColor(_selectedLevel!);
-    }
-    if (rate >= 90) return AppColors.success;
-    if (rate >= 60) return AppColors.accent;
-    return AppColors.warning;
-  }
-
-  // 完成趋势 - 完成率曲线图
-  Widget _buildCompletionTrend(AppStore store) {
-    final trendData = store.getCompletionTrend(_range, customStart: _customStart, customEnd: _customEnd, level: _selectedLevel);
-    const chartHeight = 140.0;
-    const labelHeight = 30.0;
-    final dayCount = trendData.length;
-    final useScroll = dayCount > 14;
-    final barWidth = useScroll ? 32.0 : (MediaQuery.of(context).size.width - 64) / dayCount;
-
-    // 计算每天的完成率
-    final rates = trendData.map((d) {
-      final total = d['total'] as int;
-      final completed = d['completed'] as int;
-      return total > 0 ? (completed / total * 100).round() : 0;
-    }).toList();
-
-    // 生成曲线路径
-    Path generateLinePath(double width, double height, List<int> values) {
-      final path = Path();
-      if (values.isEmpty) return path;
-
-      final stepX = width / (values.length > 1 ? values.length - 1 : 1);
-      for (int i = 0; i < values.length; i++) {
-        final x = stepX * i;
-        final y = height - (values[i] / 100) * height;
-        if (i == 0) {
-          path.moveTo(x, y);
-        } else {
-          // 使用贝塞尔曲线平滑
-          final prevX = stepX * (i - 1);
-          final prevY = height - (values[i - 1] / 100) * height;
-          final cpx = (prevX + x) / 2;
-          path.cubicTo(cpx, prevY, cpx, y, x, y);
-        }
-      }
-      return path;
-    }
-
-    // 生成渐变填充路径
-    Path generateFillPath(double width, double height, List<int> values) {
-      final linePath = generateLinePath(width, height, values);
-      final fillPath = Path.from(linePath);
-      if (values.isNotEmpty) {
-        final stepX = width / (values.length > 1 ? values.length - 1 : 1);
-        final lastX = stepX * (values.length - 1);
-        fillPath.lineTo(lastX, height);
-        fillPath.lineTo(0, height);
-        fillPath.close();
-      }
-      return fillPath;
-    }
-
-    Widget _buildChart() {
-      final totalWidth = useScroll ? (dayCount * barWidth) : double.infinity;
-      return SizedBox(
-        height: chartHeight + labelHeight,
-        child: CustomPaint(
-          size: Size(totalWidth, chartHeight + labelHeight),
-          painter: _TrendChartPainter(
-            rates: rates,
-            labels: trendData.map((d) => d['label'] as String).toList(),
-            chartHeight: chartHeight,
-            barWidth: barWidth,
-            useScroll: useScroll,
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.bgSecondary,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: const BoxDecoration(
-                      color: AppColors.accent,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    '完成趋势',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-              // 图例：完成率曲线
-              Row(
-                children: [
-                  Container(
-                    width: 16,
-                    height: 2,
-                    color: AppColors.accent,
-                  ),
-                  const SizedBox(width: 4),
-                  const Text(
-                    '完成率',
-                    style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          useScroll
-              ? SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: _buildChart(),
-                )
-              : _buildChart(),
         ],
       ),
     );
@@ -1274,14 +1916,23 @@ class _HabitsPageState extends State<HabitsPage> {
   }
 
   void _adjustAgendaTime(String agendaId, String newTime, AppStore store) {
-    final agenda = store.agendaItems.firstWhere((a) => a.id == agendaId);
-    store.updateAgenda(agendaId, agenda.copyWith(time: newTime));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('已将「${agenda.content}」调整至 $newTime'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    try {
+      final agenda = store.agendaItems.firstWhere((a) => a.id == agendaId);
+      store.updateAgenda(agendaId, agenda.copyWith(time: newTime));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已将「${agenda.content}」调整至 $newTime'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (_) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('调整时间失败，事程不存在'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   // 最佳时间推荐
@@ -2640,110 +3291,5 @@ class _HabitsPageState extends State<HabitsPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已忽略'), duration: Duration(seconds: 1)),
     );
-  }
-}
-
-class _TrendChartPainter extends CustomPainter {
-  final List<int> rates;
-  final List<String> labels;
-  final double chartHeight;
-  final double barWidth;
-  final bool useScroll;
-
-  _TrendChartPainter({
-    required this.rates,
-    required this.labels,
-    required this.chartHeight,
-    required this.barWidth,
-    required this.useScroll,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final count = rates.length;
-    if (count == 0) return;
-
-    final chartWidth = useScroll ? (count * barWidth) : size.width;
-    final stepX = chartWidth / (count > 1 ? count - 1 : 1);
-
-    // 1. 横向参考线
-    final gridPaint = Paint()
-      ..color = AppColors.bgTertiary
-      ..strokeWidth = 1;
-    for (int i = 1; i < 4; i++) {
-      final y = chartHeight * (i / 4);
-      canvas.drawLine(Offset(0, y), Offset(chartWidth, y), gridPaint);
-    }
-
-    // 2. 渐变填充区域
-    final fillPaint = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          AppColors.accent.withOpacity(0.25),
-          AppColors.accent.withOpacity(0.02),
-        ],
-      ).createShader(Rect.fromLTWH(0, 0, chartWidth, chartHeight));
-
-    final fillPath = Path();
-    final linePath = Path();
-    for (int i = 0; i < count; i++) {
-      final x = stepX * i;
-      final y = chartHeight - (rates[i] / 100) * chartHeight;
-      if (i == 0) {
-        fillPath.moveTo(x, y);
-        linePath.moveTo(x, y);
-      } else {
-        final prevX = stepX * (i - 1);
-        final prevY = chartHeight - (rates[i - 1] / 100) * chartHeight;
-        final cpx = (prevX + x) / 2;
-        fillPath.cubicTo(cpx, prevY, cpx, y, x, y);
-        linePath.cubicTo(cpx, prevY, cpx, y, x, y);
-      }
-    }
-    final lastX = stepX * (count - 1);
-    fillPath.lineTo(lastX, chartHeight);
-    fillPath.lineTo(0, chartHeight);
-    fillPath.close();
-    canvas.drawPath(fillPath, fillPaint);
-
-    // 3. 曲线
-    final linePaint = Paint()
-      ..color = AppColors.accent
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-    canvas.drawPath(linePath, linePaint);
-
-    // 4. 数据点
-    final dotPaint = Paint()..color = AppColors.accent;
-    final dotBgPaint = Paint()..color = Colors.white;
-    for (int i = 0; i < count; i++) {
-      final x = stepX * i;
-      final y = chartHeight - (rates[i] / 100) * chartHeight;
-      canvas.drawCircle(Offset(x, y), 3.5, dotBgPaint);
-      canvas.drawCircle(Offset(x, y), 2.5, dotPaint);
-    }
-
-    // 5. 日期标签
-    final labelPainter = TextPainter(
-      textDirection: TextDirection.ltr,
-      textAlign: TextAlign.center,
-    );
-    for (int i = 0; i < count; i++) {
-      final x = stepX * i;
-      labelPainter.text = TextSpan(
-        text: labels[i],
-        style: const TextStyle(fontSize: 9, color: AppColors.textTertiary),
-      );
-      labelPainter.layout();
-      labelPainter.paint(canvas, Offset(x - labelPainter.width / 2, chartHeight + 8));
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _TrendChartPainter oldDelegate) {
-    return rates != oldDelegate.rates || labels != oldDelegate.labels;
   }
 }

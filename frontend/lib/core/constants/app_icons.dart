@@ -136,4 +136,5 @@ class AppIcons {
   static const IconData edit = LucideIcons.pencil;
   static const IconData edit3 = LucideIcons.pencil_line;
   static const IconData zap = LucideIcons.zap;
+  static const IconData merge = LucideIcons.merge;
 }

@@ -61,7 +61,7 @@ class AboutHelpPage extends StatelessWidget {
             child: const Icon(Icons.favorite, color: Colors.white, size: 36),
           ),
           const SizedBox(height: 12),
-          const Text('日常意识助手', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+          const Text('生活助手', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
           const SizedBox(height: 4),
           const Text('版本 1.0.0 (Build 20260701)',
               style: TextStyle(fontSize: 12, color: Colors.white70)),

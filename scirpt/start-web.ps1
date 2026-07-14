@@ -1,46 +1,41 @@
-$ErrorActionPreference = "Stop"
-
-$scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
-$projectPath = Join-Path $scriptPath "..\frontend"
-
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "  DailyAwarenessApp Flutter Web" -ForegroundColor Cyan
-Write-Host "==========================================" -ForegroundColor Cyan
+Write-Host "=========================================="
+Write-Host "   Daily Awareness - Flutter Web"
+Write-Host "=========================================="
 Write-Host ""
 
-Set-Location $projectPath
+$projectDir = Join-Path (Split-Path $PSScriptRoot -Parent) "frontend"
 
-Write-Host "[1/3] Checking Flutter dependencies..." -ForegroundColor Yellow
-try {
-    flutter pub get
-    Write-Host "[1/3] Dependencies ready" -ForegroundColor Green
-} catch {
-    Write-Host "[ERROR] Failed to get dependencies!" -ForegroundColor Red
-    Write-Host "        Please check Flutter installation" -ForegroundColor Red
-    pause
+if (-not (Test-Path "$projectDir\pubspec.yaml")) {
+    Write-Host "[ERROR] Project directory not found" -ForegroundColor Red
+    Write-Host "Path: $projectDir"
+    Read-Host "Press Enter to exit"
     exit 1
 }
 
-Write-Host ""
-Write-Host "[2/3] Starting Flutter Web with Edge..." -ForegroundColor Yellow
-Write-Host ""
-Write-Host "If browser doesn't open automatically, visit:" -ForegroundColor Gray
-Write-Host "        http://localhost:8088" -ForegroundColor Gray
-Write-Host ""
-Write-Host "Press Ctrl+C to stop the server" -ForegroundColor Gray
-Write-Host ""
+Set-Location $projectDir
 
-try {
-    flutter run -d edge --web-port 8088
-} catch {
-    Write-Host "[ERROR] Flutter run failed!" -ForegroundColor Red
-    Write-Host "Error: $_" -ForegroundColor Red
-    pause
+Write-Host "[1/2] Checking Flutter environment..."
+$flutterPath = Get-Command flutter -ErrorAction SilentlyContinue
+if (-not $flutterPath) {
+    Write-Host "[ERROR] Flutter not found in PATH!" -ForegroundColor Red
+    Write-Host "Please install Flutter and add to PATH"
+    Read-Host "Press Enter to exit"
     exit 1
 }
+Write-Host "[OK] Flutter found" -ForegroundColor Green
 
 Write-Host ""
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "  Server stopped" -ForegroundColor Cyan
-Write-Host "==========================================" -ForegroundColor Cyan
-pause
+Write-Host "=========================================="
+Write-Host "   [2/2] Starting Daily Awareness..."
+Write-Host "=========================================="
+Write-Host ""
+Write-Host "This may take 30-60 seconds..."
+Write-Host ""
+Write-Host "If browser doesn't open, visit:"
+Write-Host "  http://localhost:8088"
+Write-Host ""
+Write-Host "Press Ctrl+C to stop"
+Write-Host "=========================================="
+Write-Host ""
+
+flutter run -d edge --web-port 8088

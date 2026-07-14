@@ -30,6 +30,7 @@ class _HomePageState extends State<HomePage> {
   late int _calYear;
   late int _calMonth;
   Timer? _reminderTimer;
+  AgendaLevel? _agendaLevelFilter; // null = 全部
 
   @override
   void initState() {
@@ -188,6 +189,9 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ),
+              // 级别筛选区（仅事程Tab显示）
+              if (_activeTab == 'agenda')
+                _buildLevelFilter(dayAgendas),
               // 内容区
               Expanded(
                 child: ListView(
@@ -262,6 +266,82 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildLevelFilter(List<AgendaItem> dayAgendas) {
+    final filters = [
+      {'level': null, 'label': '全部', 'color': AppColors.textSecondary, 'bg': AppColors.bgTertiary},
+      {'level': AgendaLevel.normal, 'label': '普通', 'color': AppColors.info, 'bg': AppColors.infoLight},
+      {'level': AgendaLevel.important, 'label': '重要', 'color': AppColors.warning, 'bg': AppColors.warningLight},
+      {'level': AgendaLevel.mustDoShort, 'label': '短必做', 'color': AppColors.danger, 'bg': AppColors.dangerLight},
+      {'level': AgendaLevel.mustDoLong, 'label': '长必做', 'color': AppColors.danger, 'bg': AppColors.dangerLight},
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: filters.map((f) {
+            final level = f['level'] as AgendaLevel?;
+            final count = level == null
+                ? dayAgendas.length
+                : dayAgendas.where((a) => a.level == level).length;
+            final isActive = _agendaLevelFilter == level;
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: GestureDetector(
+                onTap: () => setState(() => _agendaLevelFilter = level),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isActive ? (level?.isMustDo ?? false ? AppColors.danger : AppColors.accent) : f['bg'] as Color,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isActive ? Colors.transparent : AppColors.border,
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        f['label'] as String,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                          color: isActive ? Colors.white : f['color'] as Color,
+                        ),
+                      ),
+                      if (count > 0) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          width: 18,
+                          height: 18,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: isActive ? Colors.white.withOpacity(0.3) : AppColors.bgPrimary,
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          child: Text(
+                            '$count',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: isActive ? Colors.white : f['color'] as Color,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
   List<Widget> _buildTimelineContent(List<TimelineRecord> records) {
     if (records.isEmpty) {
       return [
@@ -293,6 +373,11 @@ class _HomePageState extends State<HomePage> {
   List<Widget> _buildAgendaContent(List<AgendaItem> all) {
     final widgets = <Widget>[];
     final store = context.read<AppStore>();
+
+    // 级别筛选
+    final filtered = _agendaLevelFilter == null
+        ? all
+        : all.where((a) => a.level == _agendaLevelFilter).toList();
 
     // 待确认事程（时间推断 UI）
     if (_isToday && store.pendingAgendaConfirm.isNotEmpty) {
@@ -378,7 +463,7 @@ class _HomePageState extends State<HomePage> {
       ));
     }
 
-    if (all.isEmpty) {
+    if (filtered.isEmpty) {
       widgets.add(const SizedBox(height: 32));
       widgets.add(Center(
         child: Column(
@@ -386,7 +471,7 @@ class _HomePageState extends State<HomePage> {
             const Text('📭', style: TextStyle(fontSize: 32)),
             const SizedBox(height: 8),
             Text(
-              _isToday ? '暂无今日事程' : '该日无事程记录',
+              _isToday ? '暂无符合条件的事程' : '该日无符合条件的事程',
               style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
             ),
           ],
@@ -396,7 +481,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     // 平铺展示，按时间排序
-    widgets.addAll(all.map((a) => Container(
+    widgets.addAll(filtered.map((a) => Container(
       margin: const EdgeInsets.only(bottom: 8),
       child: LongPressDeleteWrapper(
         onDelete: () => context.read<AppStore>().deleteAgenda(a.id),

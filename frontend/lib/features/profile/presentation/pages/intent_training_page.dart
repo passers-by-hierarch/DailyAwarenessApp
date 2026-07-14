@@ -237,7 +237,20 @@ class _IntentTrainingPageState extends State<IntentTrainingPage> {
               ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _mergeDuplicates,
+              icon: const Icon(AppIcons.merge, size: 18),
+              label: const Text('合并重复'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.purple,
+                side: const BorderSide(color: AppColors.purple),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           Expanded(
             child: OutlinedButton.icon(
               onPressed: _confirmClearAll,
@@ -249,6 +262,81 @@ class _IntentTrainingPageState extends State<IntentTrainingPage> {
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _mergeDuplicates() async {
+    final store = context.read<AppStore>();
+    final intentService = store.intentService;
+    if (intentService == null) return;
+
+    final duplicates = intentService.findSemanticDuplicates();
+    if (duplicates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('没有找到语义重复的模式'), duration: Duration(seconds: 1)),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('发现${duplicates.length}组重复模式'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: duplicates.map((group) {
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.bgTertiary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: group.map((p) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.accentLight,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text('${p.count}次', style: const TextStyle(fontSize: 11, color: AppColors.accent)),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(p.inputText, style: const TextStyle(fontSize: 13)),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.purple),
+            onPressed: () async {
+              await intentService.mergeSemanticPatterns();
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('重复模式已合并'), duration: Duration(seconds: 1)),
+              );
+            },
+            child: const Text('确认合并', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -393,6 +481,8 @@ class _IntentTrainingPageState extends State<IntentTrainingPage> {
                         spacing: 6,
                         runSpacing: 4,
                         children: slot.intents.first.slots.entries.map((e) {
+                          final label = _slotKeyToLabel(e.key);
+                          final displayValue = _formatSlotValue(e.key, e.value);
                           return Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
@@ -400,7 +490,7 @@ class _IntentTrainingPageState extends State<IntentTrainingPage> {
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
-                              '${e.key}: ${e.value}',
+                              '$label: $displayValue',
                               style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                             ),
                           );
@@ -437,6 +527,48 @@ class _IntentTrainingPageState extends State<IntentTrainingPage> {
       ),
     );
   }
+
+  String _slotKeyToLabel(String key) {
+    const labels = {
+      'store': '商店',
+      'items': '商品',
+      'items_text': '商品',
+      'item_name': '物品',
+      'location': '位置',
+      'content': '内容',
+      'keyword': '关键词',
+      'quantity': '数量',
+      'unit': '单位',
+      'time': '时间',
+      'date_offset': '日期',
+      'is_must_do': '级别',
+    };
+    return labels[key] ?? key;
+  }
+
+  String _formatSlotValue(String key, dynamic value) {
+    if (value == null) return '未设置';
+    if (value is List) {
+      if (key == 'items' && value.isNotEmpty) {
+        return value.map((i) {
+          final item = i as Map<String, dynamic>;
+          return '${item['quantity']}${item['unit']}${item['name']}';
+        }).join('、');
+      }
+      return value.join('、');
+    }
+    if (key == 'is_must_do') {
+      return value == true ? '必做' : '普通';
+    }
+    if (key == 'date_offset') {
+      final offset = int.tryParse(value.toString()) ?? 0;
+      if (offset == 0) return '今天';
+      if (offset == 1) return '明天';
+      if (offset == 2) return '后天';
+      return '$offset天后';
+    }
+    return value.toString();
+  }
 }
 
 class _SplitPart {
@@ -467,6 +599,7 @@ class _PatternDialogState extends State<_PatternDialog> {
   final List<TimelineSlot> _slots = [];
   final Map<String, dynamic> _currentSlots = {};
   List<_SplitPart> _splitParts = [];
+  List<String> _variants = [];
   IntentType _selectedIntent = IntentType.behavior;
   bool _isSubmitting = false;
   int? _editingSlotIdx;
@@ -1635,6 +1768,93 @@ class _PatternDialogState extends State<_PatternDialog> {
     return 'consume'; // 默认按消耗处理
   }
 
+  void _generateVariants() {
+    final text = _textCtrl.text.trim();
+    if (text.isEmpty) {
+      _variants = [];
+      setState(() {});
+      return;
+    }
+
+    final variants = <String>{};
+    final consumedVariants = [
+      ['吃了', '吃', '服用了', '服用', '服了', '服'],
+      ['喝了', '喝'],
+      ['用了', '用', '使用了', '使用'],
+    ];
+    final placedVariants = [
+      ['放了', '放', '搁了', '搁', '塞了', '塞'],
+    ];
+    final boughtVariants = [
+      ['买了', '买', '购买了', '购买'],
+    ];
+
+    for (final group in consumedVariants) {
+      for (final verb in group) {
+        for (final replacement in group) {
+          if (verb != replacement && text.contains(verb)) {
+            variants.add(text.replaceFirst(verb, replacement));
+          }
+        }
+      }
+    }
+
+    for (final group in placedVariants) {
+      for (final verb in group) {
+        for (final replacement in group) {
+          if (verb != replacement && text.contains(verb)) {
+            variants.add(text.replaceFirst(verb, replacement));
+          }
+        }
+      }
+    }
+
+    for (final group in boughtVariants) {
+      for (final verb in group) {
+        for (final replacement in group) {
+          if (verb != replacement && text.contains(verb)) {
+            variants.add(text.replaceFirst(verb, replacement));
+          }
+        }
+      }
+    }
+
+    if (text.contains('刚去')) {
+      variants.add(text.replaceFirst('刚去', '去'));
+      variants.add(text.replaceFirst('刚去', '到'));
+    }
+    if (text.contains('去')) {
+      variants.add(text.replaceFirst('去', '到'));
+    }
+    if (text.contains('在')) {
+      variants.add(text.replaceFirst('在', ''));
+    }
+
+    _variants = variants.take(5).toList();
+    setState(() {});
+  }
+
+  void _selectVariant(String variant) {
+    _textCtrl.text = variant;
+    _variants = [];
+    setState(() {});
+  }
+
+  void _addAllVariants() async {
+    if (_variants.isEmpty) return;
+    
+    final store = context.read<AppStore>();
+    for (final variant in _variants) {
+      await store.addIntentPattern(variant, _slots);
+    }
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已添加${_variants.length}个变体'), duration: const Duration(seconds: 1)),
+    );
+    _variants = [];
+    setState(() {});
+  }
+
   void _addSlotValue() {
     if (_slotKeyCtrl.text.trim().isNotEmpty && _slotValueCtrl.text.trim().isNotEmpty) {
       _currentSlots[_slotKeyCtrl.text.trim()] = _slotValueCtrl.text.trim();
@@ -2175,10 +2395,87 @@ class _PatternDialogState extends State<_PatternDialog> {
                               ),
                             ),
                           ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: _generateVariants,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: AppColors.purple,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(AppIcons.refreshCw, size: 14, color: Colors.white),
+                                  const SizedBox(width: 4),
+                                  const Text('生成变体', style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600)),
+                                ],
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
+                    
+                    if (_variants.isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.purpleLight,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppColors.purple.withOpacity(0.2)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(AppIcons.lightbulb, size: 14, color: AppColors.purple),
+                                const SizedBox(width: 6),
+                                Text('相似表达', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.purple)),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: _variants.map((variant) {
+                                return GestureDetector(
+                                  onTap: () => _selectVariant(variant),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.bgSecondary,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: AppColors.border),
+                                    ),
+                                    child: Text(variant, style: const TextStyle(fontSize: 12, color: AppColors.textPrimary)),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton(
+                                onPressed: _addAllVariants,
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 6),
+                                  side: BorderSide(color: AppColors.purple),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                                ),
+                                child: Text('全部添加', style: TextStyle(fontSize: 12, color: AppColors.purple)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ] else ...[
+                      const SizedBox(height: 4),
+                    ],
 
                     // 2. 识别结果（时间槽 + 意图）
                     _buildSectionTitle('识别结果', AppIcons.zap, '匹配到的时间和意图信息'),

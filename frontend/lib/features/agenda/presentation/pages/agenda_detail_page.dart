@@ -19,6 +19,7 @@ class AgendaDetailPage extends StatefulWidget {
 class _AgendaDetailPageState extends State<AgendaDetailPage> {
   bool _reminderExpanded = false;
   bool _chainExpanded = false;
+  bool _showAllHistory = false;
   String? _chainAfterId;
   final TextEditingController _contentController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
@@ -114,6 +115,12 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
               padding: const EdgeInsets.all(16),
               children: [
                 _buildBasicInfoCard(agenda),
+                const SizedBox(height: 12),
+                _buildStatsCard(agenda),
+                const SizedBox(height: 12),
+                _buildHistoryList(agenda),
+                const SizedBox(height: 12),
+                _buildAnalysisSection(agenda),
                 const SizedBox(height: 12),
                 _buildNotesSection(agenda),
                 const SizedBox(height: 12),
@@ -265,6 +272,456 @@ class _AgendaDetailPageState extends State<AgendaDetailPage> {
             const SizedBox(height: 16),
             _buildLevelSelector(),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatsCard(AgendaItem agenda) {
+    final store = context.read<AppStore>();
+    final now = store.now;
+    
+    final allAgendas = store.agendaItems
+        .where((a) => a.content == agenda.content)
+        .toList();
+    
+    final copies = allAgendas.where((a) => a.category == AgendaCategory.dailyMustDo).toList();
+    
+    final templates = allAgendas.where((a) => a.category != AgendaCategory.dailyMustDo).toList();
+    
+    final template = templates.isNotEmpty 
+        ? templates.reduce((a, b) => a.streak > b.streak ? a : b)
+        : agenda;
+
+    final totalCount = copies.length + (templates.length > 0 ? 1 : 0);
+    
+    final completedCopies = copies.where((a) => a.status == AgendaStatus.completed).length;
+    final completedTemplates = templates.where((a) => a.status == AgendaStatus.completed).length;
+    final completedCount = completedCopies + completedTemplates;
+    
+    final rate = totalCount > 0 ? ((completedCount / totalCount) * 100).round() : 0;
+    
+    final weekStart = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
+    final weekEnd = weekStart.add(const Duration(days: 6));
+    final weekStartStr = '${weekStart.year}-${weekStart.month.toString().padLeft(2, '0')}-${weekStart.day.toString().padLeft(2, '0')}';
+    final weekEndStr = '${weekEnd.year}-${weekEnd.month.toString().padLeft(2, '0')}-${weekEnd.day.toString().padLeft(2, '0')}';
+    
+    final weekAgendas = allAgendas.where((a) => 
+      a.date.compareTo(weekStartStr) >= 0 && a.date.compareTo(weekEndStr) <= 0
+    ).toList();
+    final weekCompleted = weekAgendas.where((a) => a.status == AgendaStatus.completed).length;
+    final weekTotal = weekAgendas.length;
+
+    final streak = template.streak;
+
+    final stats = [
+      {'label': '总次数', 'value': '$totalCount', 'color': AppColors.accent, 'icon': '📊'},
+      {'label': '完成率', 'value': '$rate%', 'color': rate >= 90 ? AppColors.success : rate >= 60 ? AppColors.accent : AppColors.warning, 'icon': '✅'},
+      {'label': '连续天数', 'value': '$streak天', 'color': AppColors.warning, 'icon': '🔥'},
+      {'label': '本周进度', 'value': '$weekCompleted/$weekTotal', 'color': AppColors.purple, 'icon': '📅'},
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.bgSecondary,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: AppColors.cardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: AppColors.accent,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                '数据统计',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (totalCount == 0)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                child: Text(
+                  '暂无统计数据',
+                  style: TextStyle(fontSize: 13, color: AppColors.textTertiary),
+                ),
+              ),
+            )
+          else
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: 2.2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+              ),
+              itemCount: stats.length,
+              itemBuilder: (ctx, index) {
+                final stat = stats[index];
+                return Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.bgTertiary,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(stat['icon'] as String, style: const TextStyle(fontSize: 16)),
+                          const SizedBox(width: 6),
+                          Text(
+                            stat['value'] as String,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: stat['color'] as Color,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        stat['label'] as String,
+                        style: const TextStyle(fontSize: 11, color: AppColors.textTertiary),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryList(AgendaItem agenda) {
+    final store = context.read<AppStore>();
+    final now = store.now;
+    final todayStr = AgendaUtils.todayStr(now: now);
+    
+    final historyAgendas = store.agendaItems
+        .where((a) => 
+          a.content == agenda.content && 
+          a.id != agenda.id &&
+          a.date.compareTo(todayStr) < 0
+        )
+        .toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+
+    if (historyAgendas.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final displayCount = historyAgendas.length > 10 ? 10 : historyAgendas.length;
+    final displayList = historyAgendas.take(displayCount).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.bgSecondary,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: AppColors.cardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: AppColors.warning,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                '历史记录',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const Spacer(),
+              if (historyAgendas.length > 10)
+                GestureDetector(
+                  onTap: () => setState(() => _showAllHistory = !_showAllHistory),
+                  child: Text(
+                    _showAllHistory ? '收起' : '查看全部',
+                    style: const TextStyle(fontSize: 12, color: AppColors.accent, fontWeight: FontWeight.w500),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...(_showAllHistory ? historyAgendas : displayList).map((item) {
+            final isCompleted = item.status == AgendaStatus.completed;
+            final dateParts = item.date.split('-');
+            final dateLabel = dateParts.length >= 3 ? '${dateParts[1]}/${dateParts[2]}' : item.date;
+            
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.bgTertiary,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isCompleted ? AppColors.success : 
+                             item.status == AgendaStatus.skipped ? AppColors.textTertiary :
+                             item.status == AgendaStatus.expired ? AppColors.danger : AppColors.warning,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '$dateLabel ${item.time}',
+                          style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                        ),
+                        Text(
+                          _getStatusLabel(item.status),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isCompleted ? AppColors.success : 
+                                   item.status == AgendaStatus.skipped ? AppColors.textTertiary :
+                                   item.status == AgendaStatus.expired ? AppColors.danger : AppColors.warning,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (isCompleted)
+                    const Icon(AppIcons.check, size: 18, color: AppColors.success),
+                ],
+              ),
+            );
+          }).toList(),
+        ],
+      ),
+    );
+  }
+
+  String _getStatusLabel(AgendaStatus status) {
+    switch (status) {
+      case AgendaStatus.completed: return '已完成';
+      case AgendaStatus.pending: return '待完成';
+      case AgendaStatus.skipped: return '已跳过';
+      case AgendaStatus.postponed: return '已推迟';
+      case AgendaStatus.expired: return '已过期';
+    }
+  }
+
+  Widget _buildAnalysisSection(AgendaItem agenda) {
+    final store = context.read<AppStore>();
+    final now = store.now;
+    
+    final thirtyDaysAgo = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 30));
+    final thirtyDaysAgoStr = '${thirtyDaysAgo.year}-${thirtyDaysAgo.month.toString().padLeft(2, '0')}-${thirtyDaysAgo.day.toString().padLeft(2, '0')}';
+    
+    final recentAgendas = store.agendaItems
+        .where((a) => 
+          a.content == agenda.content && 
+          a.status == AgendaStatus.completed &&
+          a.date.compareTo(thirtyDaysAgoStr) >= 0
+        )
+        .toList();
+
+    if (recentAgendas.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final hourDistribution = <int, int>{};
+    for (final a in recentAgendas) {
+      final timeParts = a.time.split(':');
+      final hour = timeParts.isNotEmpty ? int.tryParse(timeParts[0]) ?? 0 : 0;
+      hourDistribution[hour] = (hourDistribution[hour] ?? 0) + 1;
+    }
+
+    int maxCount = 1;
+    int bestHour = 8;
+    if (hourDistribution.isNotEmpty) {
+      maxCount = hourDistribution.values.reduce((a, b) => a > b ? a : b);
+      bestHour = hourDistribution.entries.reduce((a, b) => a.value > b.value ? a : b).key;
+    }
+
+    final last7Days = <String, bool>{};
+    for (int i = 6; i >= 0; i--) {
+      final date = DateTime(now.year, now.month, now.day).subtract(Duration(days: i));
+      final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final hasCompleted = recentAgendas.any((a) => a.date == dateStr);
+      last7Days[dateStr] = hasCompleted;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.bgSecondary,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: AppColors.cardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: AppColors.purple,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                '养成分析',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.bgTertiary,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    const Icon(AppIcons.clock, size: 16, color: AppColors.accent),
+                    const SizedBox(width: 8),
+                    const Text('最佳完成时段', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textPrimary)),
+                    const Spacer(),
+                    Text(
+                      '${bestHour.toString().padLeft(2, '0')}:00 - ${(bestHour + 1).toString().padLeft(2, '0')}:00',
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.accent),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 24,
+                  child: Row(
+                    children: List.generate(24, (hour) {
+                      final count = hourDistribution[hour] ?? 0;
+                      final width = count > 0 ? (count / maxCount) * 100 : 0;
+                      return Expanded(
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 0.5),
+                          decoration: BoxDecoration(
+                            color: width > 0 
+                              ? AppColors.accent.withOpacity(width / 100) 
+                              : AppColors.bgSecondary,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Text('0:00', style: TextStyle(fontSize: 8, color: AppColors.textTertiary)),
+                    const Spacer(),
+                    const Text('12:00', style: TextStyle(fontSize: 8, color: AppColors.textTertiary)),
+                    const Spacer(),
+                    const Text('24:00', style: TextStyle(fontSize: 8, color: AppColors.textTertiary)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.bgTertiary,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    const Icon(AppIcons.trendingUp, size: 16, color: AppColors.success),
+                    const SizedBox(width: 8),
+                    const Text('近期完成趋势', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textPrimary)),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: last7Days.entries.map((entry) {
+                    final dateParts = entry.key.split('-');
+                    final dayLabel = dateParts.length >= 3 ? dateParts[2] : '';
+                    final isCompleted = entry.value;
+                    
+                    return Expanded(
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 24,
+                            height: 24,
+                            margin: const EdgeInsets.only(bottom: 4),
+                            decoration: BoxDecoration(
+                              color: isCompleted ? AppColors.success : AppColors.bgSecondary,
+                              borderRadius: BorderRadius.circular(4),
+                              border: isCompleted ? null : Border.all(color: AppColors.border),
+                            ),
+                            child: isCompleted 
+                              ? const Icon(AppIcons.check, size: 14, color: Colors.white)
+                              : null,
+                          ),
+                          Text(
+                            dayLabel,
+                            style: const TextStyle(fontSize: 9, color: AppColors.textTertiary),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

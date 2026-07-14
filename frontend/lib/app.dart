@@ -28,14 +28,14 @@ import 'features/profile/presentation/pages/ai_settings_page.dart';
 import 'features/tags/presentation/pages/tag_management_page.dart';
 import 'features/profile/presentation/pages/intent_training_page.dart';
 
-class DailyAwarenessApp extends StatelessWidget {
-  const DailyAwarenessApp({super.key});
+class LifeAssistantApp extends StatelessWidget {
+  const LifeAssistantApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     Intl.defaultLocale = 'zh_CN';
     return MaterialApp(
-      title: '日常意识助手',
+      title: '生活助手',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       locale: const Locale('zh', 'CN'),

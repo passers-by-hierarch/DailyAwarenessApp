@@ -1,22 +1,21 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'llm_service.dart';
 
-/// 意图类型
 enum IntentType {
-  behavior,        // 行为记录
-  agendaCreate,    // 创建事程
-  agendaComplete,  // 完成事程
-  itemLocation,    // 物品位置记录
-  shopping,        // 购物记录
-  inventoryConsume,// 库存消耗
-  general,         // 通用/其他
+  behavior,
+  agendaCreate,
+  agendaComplete,
+  itemLocation,
+  shopping,
+  inventoryConsume,
+  general,
 }
 
-/// 单个意图项
 class IntentItem {
   final IntentType type;
   final Map<String, dynamic> slots;
@@ -73,9 +72,8 @@ class IntentItem {
   }
 }
 
-/// 时间线槽位 - 一个时间点及其对应的多个意图
 class TimelineSlot {
-  final String time; // HH:MM 格式
+  final String time;
   final List<IntentItem> intents;
 
   const TimelineSlot({
@@ -108,10 +106,9 @@ class TimelineSlot {
   }
 }
 
-/// 意图识别结果（支持多时间点多意图）
 class IntentResult {
   final List<TimelineSlot> timelineSlots;
-  final String source; // 'llm' | 'local' | 'rule'
+  final String source;
   final String? reason;
 
   const IntentResult({
@@ -120,22 +117,18 @@ class IntentResult {
     this.reason,
   });
 
-  /// 所有意图的扁平化列表
   List<IntentItem> get allIntents {
     return timelineSlots.expand((slot) => slot.intents).toList();
   }
 
-  /// 主意图（第一个时间槽的第一个意图）
   IntentItem get primary {
     return timelineSlots.isNotEmpty && timelineSlots.first.intents.isNotEmpty
         ? timelineSlots.first.intents.first
         : const IntentItem(type: IntentType.general, slots: {});
   }
 
-  /// 主意图类型
   IntentType get primaryIntent => primary.type;
 
-  /// 主槽值
   Map<String, dynamic> get primarySlots => primary.slots;
 
   factory IntentResult.single(IntentType type, Map<String, dynamic> slots, double conf, String source, [String? reason]) {
@@ -155,7 +148,7 @@ class IntentResult {
 
   factory IntentResult.fromJson(Map<String, dynamic> json) {
     final slots = <TimelineSlot>[];
-    
+
     if (json['timelineSlots'] is List) {
       for (final e in json['timelineSlots']) {
         slots.add(TimelineSlot.fromJson(e));
@@ -187,7 +180,6 @@ class IntentResult {
   }
 }
 
-/// 用户习惯模式记录
 class UserPattern {
   final String inputText;
   List<TimelineSlot> slots;
@@ -235,7 +227,6 @@ class UserPattern {
   }
 }
 
-/// 意图识别服务 - LLM + 本地模式学习
 class IntentRecognitionService {
   static const String _patternsKey = 'intent_patterns';
   static const String _presetLoadedKey = 'intent_preset_loaded';
@@ -245,163 +236,76 @@ class IntentRecognitionService {
   final LlmService _llm;
   SharedPreferences? _prefs;
   List<UserPattern> _patterns = [];
+  Map<String, List<UserPattern>> _invertedIndex = {};
 
   int llmCallCount = 0;
   int localMatchCount = 0;
 
   IntentRecognitionService(this._llm);
 
-  Future<void> init() async {
-    _prefs = await SharedPreferences.getInstance();
-    _loadPatterns();
-    await _ensurePresetLoaded();
-  }
+  // ===== 基础工具方法 =====
 
-  Future<void> _ensurePresetLoaded() async {
-    final loaded = _prefs?.getBool(_presetLoadedKey) ?? false;
-    // 如果从未加载过预设，或者当前模式列表为空（可能被清空了），则加载预设
-    if (!loaded || _patterns.isEmpty) {
-      await loadPresetPatterns();
-      await _prefs?.setBool(_presetLoadedKey, true);
-    }
-  }
-
-  void _loadPatterns() {
-    final jsonStr = _prefs?.getString(_patternsKey);
-    if (jsonStr != null && jsonStr.isNotEmpty) {
-      try {
-        final list = jsonDecode(jsonStr) as List;
-        _patterns = list
-            .map((e) => UserPattern.fromJson(e as Map<String, dynamic>))
-            .toList();
-      } catch (e) {
-        debugPrint('意图模式加载失败: $e');
-        _patterns = [];
+  List<String> _segmentText(String text) {
+    final results = <String>[];
+    final words = text.split(RegExp(r'[\s,，。！？；;：:、]')).where((w) => w.isNotEmpty).toList();
+    for (final word in words) {
+      for (var i = 0; i < word.length; i++) {
+        results.add(word[i]);
+      }
+      for (var i = 0; i < word.length - 1; i++) {
+        results.add(word.substring(i, i + 2));
       }
     }
-  }
-
-  Future<void> _savePatterns() async {
-    final jsonStr = jsonEncode(_patterns.map((p) => p.toJson()).toList());
-    await _prefs?.setString(_patternsKey, jsonStr);
-  }
-
-  /// 识别意图 - 主入口
-  Future<IntentResult> recognize(String text) async {
-    final t = text.trim();
-    if (t.isEmpty) {
-      return IntentResult.single(IntentType.general, {}, 0, 'rule', '空输入');
-    }
-
-    // 1. 先尝试本地模式匹配
-    final localResult = _matchLocalPattern(t);
-    if (localResult != null) {
-      double maxConf = localResult.allIntents.fold(0.0, (m, i) => i.confidence > m ? i.confidence : m);
-      if (maxConf >= _localConfidenceThreshold) {
-        localMatchCount++;
-        return localResult;
-      }
-    }
-
-    // 2. LLM未配置 → 使用规则匹配
-    if (!_llm.isConfigured) {
-      return _ruleBasedRecognize(t);
-    }
-
-    // 3. 调用LLM识别
-    llmCallCount++;
-    final llmResult = await _llmRecognize(t);
-
-    // 4. 保存到本地模式库（学习）
-    _learnPattern(t, llmResult);
-
-    return llmResult;
-  }
-
-  // ===== 本地模式匹配 =====
-
-  IntentResult? _matchLocalPattern(String text) {
-    if (_patterns.isEmpty) return null;
-
-    // 完全匹配
-    for (final p in _patterns) {
-      if (p.inputText == text && p.count >= 2) {
-        return IntentResult(
-          timelineSlots: p.slots,
-          source: 'local',
-          reason: '历史模式匹配(完全匹配，出现${p.count}次)',
-        );
-      }
-    }
-
-    // 模糊匹配
-    UserPattern? bestMatch;
-    double bestScore = 0;
-
-    for (final p in _patterns) {
-      if (p.count < 2) continue;
-      final score = _textSimilarity(text, p.inputText);
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = p;
-      }
-    }
-
-    if (bestMatch != null && bestScore >= 0.7) {
-      final extractedSlots = bestMatch.slots.map((slot) {
-        final newIntents = slot.intents.map((intent) {
-          // 模糊匹配时提高置信度，避免 confidence * score 导致阈值无法通过
-          final adjustedConfidence = (intent.confidence * 0.5 + bestScore * 0.5).clamp(0.0, 1.0);
-          return IntentItem(
-            type: intent.type,
-            slots: _extractSlotsFromSimilar(text, intent),
-            confidence: adjustedConfidence,
-          );
-        }).toList();
-        return TimelineSlot(time: slot.time, intents: newIntents);
-      }).toList();
-
-      return IntentResult(
-        timelineSlots: extractedSlots,
-        source: 'local',
-        reason: '历史模式匹配(相似度${(bestScore * 100).round()}%)',
-      );
-    }
-
-    return null;
-  }
-
-  Map<String, dynamic> _extractSlotsFromSimilar(String newText, IntentItem pattern) {
-    final slots = Map<String, dynamic>.from(pattern.slots);
-
-    if (pattern.type == IntentType.itemLocation) {
-      final itemMatch = RegExp(
-        r'(?:把|将)?\s*([\u4e00-\u9fa5A-Za-z]{1,8}?)\s*(?:放|搁|塞)(?:在|到)?(?:了)?\s*([\u4e00-\u9fa5A-Za-z]+)',
-      ).firstMatch(newText);
-      if (itemMatch != null) {
-        slots['item_name'] = itemMatch.group(1)!.trim();
-        slots['location'] = itemMatch.group(2)!
-            .trim()
-            .replaceAll(RegExp(r'^(在|到)'), '')
-            .replaceAll(RegExp(r'(中|里|上|下|内)$'), '');
-      }
-    }
-
-    if (pattern.type == IntentType.shopping) {
-      final buyMatch = RegExp(r'在?(.+?)买了(.+)').firstMatch(newText);
-      if (buyMatch != null) {
-        slots['store'] = buyMatch.group(1)!.trim();
-        slots['items_text'] = buyMatch.group(2)!.trim();
-      }
-    }
-
-    return slots;
+    return results;
   }
 
   double _textSimilarity(String a, String b) {
-    if (a == b) return 1.0;
-    if (a.isEmpty || b.isEmpty) return 0.0;
+    final segA = _segmentText(a);
+    final segB = _segmentText(b);
 
+    if (segA.isEmpty || segB.isEmpty) {
+      return a == b ? 1.0 : 0.0;
+    }
+
+    final vocabulary = <String>{};
+    vocabulary.addAll(segA);
+    vocabulary.addAll(segB);
+
+    final vectorA = vocabulary.map((w) => segA.where((s) => s == w).length).toList();
+    final vectorB = vocabulary.map((w) => segB.where((s) => s == w).length).toList();
+
+    final cosine = _cosineSimilarity(vectorA, vectorB);
+    final overlap = _wordOverlap(segA, segB);
+
+    return (cosine * 0.6 + overlap * 0.4).clamp(0.0, 1.0);
+  }
+
+  double _cosineSimilarity(List<int> vectorA, List<int> vectorB) {
+    double dot = 0.0;
+    double normA = 0.0;
+    double normB = 0.0;
+
+    for (var i = 0; i < vectorA.length; i++) {
+      dot += vectorA[i] * vectorB[i];
+      normA += vectorA[i] * vectorA[i];
+      normB += vectorB[i] * vectorB[i];
+    }
+
+    normA = normA > 0 ? _sqrt(normA) : 0;
+    normB = normB > 0 ? _sqrt(normB) : 0;
+
+    return normA > 0 && normB > 0 ? dot / (normA * normB) : 0.0;
+  }
+
+  double _wordOverlap(List<String> a, List<String> b) {
+    final aSet = Set<String>.from(a);
+    final bSet = Set<String>.from(b);
+    final intersection = aSet.intersection(bSet);
+    final union = aSet.union(bSet);
+    return union.isNotEmpty ? intersection.length / union.length : 0.0;
+  }
+
+  double _fallbackSimilarity(String a, String b) {
     final aChars = a.split('');
     final bChars = b.split('');
     final common = aChars.where((c) => bChars.contains(c)).length;
@@ -412,6 +316,10 @@ class IntentRecognitionService {
     final distanceScore = 1.0 - (dist / maxLen);
 
     return (overlap * 0.4 + distanceScore * 0.6).clamp(0.0, 1.0);
+  }
+
+  double _sqrt(double value) {
+    return value > 0 ? pow(value, 0.5) as double : 0;
   }
 
   int _levenshtein(String a, String b) {
@@ -439,6 +347,620 @@ class IntentRecognitionService {
     }
 
     return matrix[b.length][a.length];
+  }
+
+  double _calculatePatternScore(UserPattern p) {
+    final now = DateTime.now();
+    final daysSinceUsed = now.difference(p.lastUsed).inDays;
+    final recencyScore = daysSinceUsed <= 1 ? 1.0 : daysSinceUsed <= 7 ? 0.8 : daysSinceUsed <= 30 ? 0.5 : 0.3;
+    final frequencyScore = p.count >= 10 ? 1.0 : p.count >= 5 ? 0.8 : p.count >= 2 ? 0.6 : 0.4;
+    return recencyScore * 0.5 + frequencyScore * 0.5;
+  }
+
+  void _buildIndex() {
+    _invertedIndex.clear();
+    for (final pattern in _patterns) {
+      final segments = _segmentText(pattern.inputText);
+      for (final seg in segments) {
+        for (var i = 0; i < seg.length; i++) {
+          final char = seg[i];
+          _invertedIndex.putIfAbsent(char, () => []).add(pattern);
+        }
+      }
+    }
+
+    final newIndex = <String, List<UserPattern>>{};
+    for (final entry in _invertedIndex.entries) {
+      newIndex[entry.key] = entry.value.toSet().toList();
+    }
+    _invertedIndex = newIndex;
+  }
+
+  List<UserPattern> _findCandidates(String text) {
+    final candidates = <UserPattern>{};
+    final segments = _segmentText(text);
+
+    for (final seg in segments) {
+      for (var i = 0; i < seg.length; i++) {
+        final char = seg[i];
+        if (_invertedIndex.containsKey(char)) {
+          candidates.addAll(_invertedIndex[char]!);
+        }
+      }
+    }
+
+    return candidates.toList();
+  }
+
+  // ===== 时间和日期提取方法 =====
+
+  List<Map<String, dynamic>> _extractAllTimePoints(String text) {
+    final results = <Map<String, dynamic>>[];
+
+    final fuzzyTimePatterns = [
+      {'pattern': '清晨', 'time': '06:00'},
+      {'pattern': '早上', 'time': '07:00'},
+      {'pattern': '早晨', 'time': '07:00'},
+      {'pattern': '上午', 'time': '09:00'},
+      {'pattern': '中午', 'time': '12:00'},
+      {'pattern': '正午', 'time': '12:00'},
+      {'pattern': '下午', 'time': '14:00'},
+      {'pattern': '傍晚', 'time': '17:00'},
+      {'pattern': '晚上', 'time': '19:00'},
+      {'pattern': '晚间', 'time': '19:00'},
+      {'pattern': '睡前', 'time': '21:00'},
+      {'pattern': '睡觉前', 'time': '21:00'},
+    ];
+
+    for (final ft in fuzzyTimePatterns) {
+      final idx = text.indexOf(ft['pattern'] as String);
+      if (idx >= 0) {
+        results.add({
+          'time': ft['time'],
+          'start': idx,
+          'end': idx + (ft['pattern'] as String).length,
+          'fuzzy': true,
+        });
+      }
+    }
+
+    final matches = RegExp(r'(\d{1,2})(?:点|时)(\d{1,2})?(?:分|半)?').allMatches(text);
+    for (final match in matches) {
+      final hour = int.tryParse(match.group(1) ?? '') ?? 0;
+      final minute = int.tryParse(match.group(2) ?? '') ?? 0;
+      String timeStr;
+      if (match.group(0)!.contains('半') && match.group(2) == null) {
+        timeStr = '${hour.toString().padLeft(2, '0')}:30';
+      } else {
+        timeStr = '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+      }
+      results.add({
+        'time': timeStr,
+        'start': match.start,
+        'end': match.end,
+        'fuzzy': false,
+      });
+    }
+
+    results.sort((a, b) => (a['start'] as int).compareTo(b['start'] as int));
+    return results;
+  }
+
+  int _extractDateOffset(String text) {
+    if (text.contains('大后天')) return 3;
+    if (text.contains('后天')) return 2;
+    if (text.contains('明天')) return 1;
+    if (text.contains('今天') || text.contains('今日')) return 0;
+    return 0;
+  }
+
+  List<int> _extractAllDateOffsets(String text) {
+    final offsets = <int>{};
+
+    if (text.contains('大后天')) offsets.add(3);
+    if (text.contains('后天')) offsets.add(2);
+    if (text.contains('明天')) offsets.add(1);
+    if (text.contains('今天') || text.contains('今日')) offsets.add(0);
+
+    return offsets.isEmpty ? [0] : offsets.toList()..sort();
+  }
+
+  String _purifyAgendaContent(String text) {
+    var result = text;
+
+    final timeWords = ['今天', '今日', '明天', '后天', '大后天', '昨天', '前天',
+      '清晨', '早上', '早晨', '上午', '中午', '正午', '下午', '傍晚', '晚上', '晚间', '睡前', '睡觉前'];
+    for (final word in timeWords) {
+      result = result.replaceAll(word, '');
+    }
+
+    result = result
+        .replaceAll(RegExp(r'\d+点\d*分?'), '')
+        .replaceAll(RegExp(r'\d+时\d*分?'), '');
+
+    result = result
+        .replaceAll('我准备', '')
+        .replaceAll('准备', '')
+        .replaceAll('要', '')
+        .replaceAll('需要', '')
+        .replaceAll('得', '')
+        .replaceAll('记得', '')
+        .replaceAll('别忘了', '')
+        .replaceAll('提醒我', '')
+        .replaceAll('一会', '')
+        .replaceAll('待会儿', '')
+        .replaceAll('等一下', '')
+        .replaceAll('回头', '')
+        .trim();
+
+    final connectives = ['都', '和', '与', '及'];
+    for (final c in connectives) {
+      result = result.replaceAll(c, '');
+    }
+
+    final tailModifiers = ['喝', '吃', '吧', '啊', '呀', '哦', '呢'];
+    var changed = true;
+    while (changed && result.isNotEmpty) {
+      changed = false;
+      for (final m in tailModifiers) {
+        if (result.endsWith(m)) {
+          result = result.substring(0, result.length - m.length);
+          changed = true;
+        }
+      }
+    }
+
+    result = result.replaceAll(RegExp(r'^[，,。.\s]+'), '');
+    result = result.replaceAll(RegExp(r'[，,。.\s]+$'), '');
+
+    if (result.isEmpty) {
+      result = text;
+      for (final word in timeWords) {
+        result = result.replaceAll(word, '');
+      }
+      result = result
+          .replaceAll('我准备', '')
+          .replaceAll('准备', '')
+          .replaceAll('要', '')
+          .replaceAll('需要', '')
+          .replaceAll('得', '')
+          .replaceAll('记得', '')
+          .replaceAll('别忘了', '')
+          .replaceAll('提醒我', '')
+          .replaceAll('一会', '')
+          .replaceAll('待会儿', '')
+          .replaceAll('等一下', '')
+          .replaceAll('回头', '')
+          .trim();
+      for (final c in connectives) {
+        result = result.replaceAll(c, '');
+      }
+      changed = true;
+      while (changed && result.isNotEmpty) {
+        changed = false;
+        for (final m in tailModifiers) {
+          if (result.endsWith(m)) {
+            result = result.substring(0, result.length - m.length);
+            changed = true;
+          }
+        }
+      }
+    }
+
+    return result.trim();
+  }
+
+  bool _containsActionVerb(String text) {
+    const actionVerbs = ['煮', '做', '吃', '喝', '洗', '打扫', '整理', '买', '跑', '走', '散', '运', '睡', '起', '烧', '蒸', '煮', '炒', '煎', '炖', '烤', '晾', '收', '寄', '取'];
+    return actionVerbs.any((v) => text.contains(v));
+  }
+
+  List<IntentItem> _recognizeSingleClause(String clause, String timeStr) {
+    final intents = <IntentItem>[];
+    if (clause.isEmpty) return intents;
+
+    final itemMatch = RegExp(
+      r'(?:把|将)?\s*([\u4e00-\u9fa5A-Za-z]{1,8}?)\s*(?:放|搁|塞)(?:在|到)?(?:了)?\s*([\u4e00-\u9fa5A-Za-z]+)',
+    ).firstMatch(clause);
+    if (itemMatch != null && itemMatch.groupCount >= 2) {
+      intents.add(IntentItem(
+        type: IntentType.itemLocation,
+        slots: {
+          'item_name': itemMatch.group(1)!.trim(),
+          'location': itemMatch.group(2)!
+              .trim()
+              .replaceAll(RegExp(r'^(在|到)'), '')
+              .replaceAll(RegExp(r'(中|里|上|下|内)$'), ''),
+        },
+        confidence: 0.8,
+      ));
+    }
+
+    final buyMatch = RegExp(r'(?:刚去|去|到|在)?(.+?)(?:买了|买)(.+)').firstMatch(clause);
+    if (buyMatch != null) {
+      var store = buyMatch.group(1)!.trim();
+      store = store
+          .replaceAll(RegExp(r'^(刚去|去|到|在)'), '')
+          .trim();
+      final itemsText = buyMatch.group(2)!.trim();
+
+      final items = <Map<String, dynamic>>[];
+      final itemMatches = RegExp(
+        r'(\d+(?:\.\d+)?)\s*(片|粒|盒|瓶|个|包|袋|支|颗|毫升|克|斤|公斤|箱|条|把)\s*([\u4e00-\u9fa5A-Za-z]{2,10})'
+      ).allMatches(itemsText);
+      for (final m in itemMatches) {
+        items.add({
+          'name': m.group(3)!,
+          'quantity': double.parse(m.group(1)!),
+          'unit': m.group(2)!,
+        });
+      }
+
+      if (items.isEmpty) {
+        final itemMatches2 = RegExp(
+          r'([\u4e00-\u9fa5A-Za-z]{2,10})\s*(\d+(?:\.\d+)?)\s*(片|粒|盒|瓶|个|包|袋|支|颗|毫升|克|斤|公斤|箱|条|把)'
+        ).allMatches(itemsText);
+        for (final m in itemMatches2) {
+          items.add({
+            'name': m.group(1)!,
+            'quantity': double.parse(m.group(2)!),
+            'unit': m.group(3)!,
+          });
+        }
+      }
+
+      final slots = <String, dynamic>{
+        'store': store,
+        'items_text': itemsText,
+      };
+      if (items.isNotEmpty) {
+        slots['items'] = items;
+      }
+
+      intents.add(IntentItem(
+        type: IntentType.shopping,
+        slots: slots,
+        confidence: 0.8,
+      ));
+    }
+
+    final reminderKeywords = ['记得', '别忘了', '提醒我', '要记得', '一定要', '需要', '要做', '得去', '准备', '一会', '待会儿', '等一下', '回头'];
+    final futureTimeKeywords = ['明天', '下周', '下次', '以后'];
+    final dateOffset = _extractDateOffset(clause);
+    final isAgenda = reminderKeywords.any((kw) => clause.contains(kw)) ||
+        futureTimeKeywords.any((kw) => clause.contains(kw)) ||
+        dateOffset > 0 ||
+        (intents.isEmpty && timeStr.isNotEmpty && _containsActionVerb(clause));
+    if (isAgenda) {
+      final content = _purifyAgendaContent(clause);
+      final slots = <String, dynamic>{'content': content.isNotEmpty ? content : clause};
+      if (dateOffset > 0) {
+        slots['date_offset'] = dateOffset;
+      }
+      if (timeStr.isNotEmpty) {
+        slots['time'] = timeStr;
+      }
+      intents.add(IntentItem(
+        type: IntentType.agendaCreate,
+        slots: slots,
+        confidence: 0.75,
+      ));
+    }
+
+    final completedKeywords = ['刚', '刚刚', '已经', '过了', '完了', '吃完了', '喝完了', '吃过了', '做完了'];
+    final pastSuffixes = ['完了', '过了', '好了'];
+    bool isCompleted = completedKeywords.any((kw) => clause.contains(kw)) ||
+        pastSuffixes.any((kw) => clause.endsWith(kw));
+    if (isCompleted && intents.isEmpty) {
+      intents.add(IntentItem(
+        type: IntentType.agendaComplete,
+        slots: {'keyword': clause},
+        confidence: 0.7,
+      ));
+    }
+
+    final consumeMatches = RegExp(
+      r'(?:吃了|吃|喝了|喝|用了|用|服用|服)\s*([\u4e00-\u9fa5A-Za-z]{2,10})(?:\s+(\d+(?:\.\d+)?)\s*(片|粒|盒|瓶|个|包|袋|支|颗|毫升|克))?',
+    ).allMatches(clause);
+    for (final consumeMatch in consumeMatches) {
+      var itemName = consumeMatch.group(1)!.trim();
+      itemName = itemName
+          .replaceAll(RegExp(r'^(完|过|了|刚|刚刚)'), '')
+          .replaceAll(RegExp(r'(完|过|了)$'), '');
+      if (itemName.isEmpty) continue;
+      intents.add(IntentItem(
+        type: IntentType.inventoryConsume,
+        slots: {
+          'item_name': itemName,
+          'quantity': double.tryParse(consumeMatch.group(2) ?? '1') ?? 1.0,
+          'unit': consumeMatch.group(3) ?? '个',
+        },
+        confidence: 0.7,
+      ));
+    }
+
+    final behaviorKeywords = ['吃', '喝', '睡', '运动', '散步', '跑步', '洗澡', '洗漱', '起床', '吃药', '吃饭', '午饭', '早饭', '晚饭', '喝水', '聊天'];
+    if (behaviorKeywords.any((kw) => clause.contains(kw)) && intents.isEmpty) {
+      intents.add(IntentItem(
+        type: IntentType.behavior,
+        slots: {'keyword': clause},
+        confidence: 0.7,
+      ));
+    }
+
+    if (intents.isEmpty) {
+      intents.add(const IntentItem(type: IntentType.general, slots: {}, confidence: 0.5));
+    }
+
+    return intents;
+  }
+
+  IntentResult _ruleBasedRecognize(String t) {
+    final now = DateTime.now();
+    final defaultTime = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    final dateOffsets = _extractAllDateOffsets(t);
+    final timePoints = _extractAllTimePoints(t);
+
+    // 提取核心时间和内容
+    String primaryTime = defaultTime;
+    if (timePoints.isNotEmpty) {
+      primaryTime = timePoints.first['time'] as String;
+    }
+
+    // 净化内容，提取核心动作
+    final purifiedContent = _purifyAgendaContent(t);
+    String coreContent = purifiedContent.isNotEmpty ? purifiedContent : t;
+
+    // 检查是否包含事程关键词
+    final reminderKeywords = ['记得', '别忘了', '提醒我', '要记得', '一定要', '需要', '要做', '得去', '准备', '一会', '待会儿', '等一下', '回头'];
+    final futureTimeKeywords = ['明天', '下周', '下次', '以后'];
+    bool isAgendaCreate = reminderKeywords.any((kw) => t.contains(kw)) ||
+        futureTimeKeywords.any((kw) => t.contains(kw));
+
+    // 多日期拆分：为每个日期创建一个意图
+    if (dateOffsets.length > 1) {
+      final expandedSlots = <TimelineSlot>[];
+      for (final offset in dateOffsets) {
+        final slots = <String, dynamic>{
+          'content': coreContent,
+          'date_offset': offset,
+        };
+        if (primaryTime != defaultTime) {
+          slots['time'] = primaryTime;
+        }
+
+        expandedSlots.add(TimelineSlot(
+          time: primaryTime,
+          intents: [IntentItem(
+            type: IntentType.agendaCreate,
+            slots: slots,
+            confidence: 0.75,
+          )],
+        ));
+      }
+      return IntentResult(
+        timelineSlots: expandedSlots,
+        source: 'rule',
+        reason: '规则匹配(多日期拆分)',
+      );
+    }
+
+    // 单日期情况
+    if (isAgendaCreate) {
+      final slots = <String, dynamic>{'content': coreContent};
+      if (dateOffsets.isNotEmpty && dateOffsets[0] > 0) {
+        slots['date_offset'] = dateOffsets[0];
+      }
+      if (primaryTime != defaultTime) {
+        slots['time'] = primaryTime;
+      }
+      return IntentResult(
+        timelineSlots: [TimelineSlot(
+          time: primaryTime,
+          intents: [IntentItem(
+            type: IntentType.agendaCreate,
+            slots: slots,
+            confidence: 0.75,
+          )],
+        )],
+        source: 'rule',
+        reason: '规则匹配(事程创建)',
+      );
+    }
+
+    // 其他意图类型：使用原有的片段识别逻辑
+    final baseSlots = <TimelineSlot>[];
+
+    if (timePoints.isEmpty) {
+      final intents = _recognizeSingleClause(t, defaultTime);
+      baseSlots.add(TimelineSlot(time: defaultTime, intents: intents));
+    } else {
+      for (var i = 0; i < timePoints.length; i++) {
+        final timePoint = timePoints[i];
+        final timeStr = timePoint['time'] as String;
+        final start = timePoint['start'] as int;
+
+        final nextStart = i + 1 < timePoints.length
+            ? timePoints[i + 1]['start'] as int
+            : t.length;
+
+        final clause = t.substring(start, nextStart).trim();
+
+        if (clause.isEmpty) continue;
+
+        final intents = _recognizeSingleClause(clause, timeStr);
+        if (intents.isNotEmpty) {
+          baseSlots.add(TimelineSlot(time: timeStr, intents: intents));
+        }
+      }
+
+      final firstStart = timePoints.first['start'] as int;
+      if (firstStart > 0) {
+        final headClause = t.substring(0, firstStart).trim();
+        if (headClause.isNotEmpty) {
+          final firstTime = timePoints.first['time'] as String;
+          final headIntents = _recognizeSingleClause(headClause, firstTime);
+          if (headIntents.isNotEmpty) {
+            baseSlots.insert(0, TimelineSlot(time: firstTime, intents: headIntents));
+          }
+        }
+      }
+
+      final lastTimeEnd = timePoints.last['end'] as int;
+      if (lastTimeEnd < t.length) {
+        final tailClause = t.substring(lastTimeEnd).trim();
+        if (tailClause.isNotEmpty) {
+          final tailIntents = _recognizeSingleClause(tailClause, defaultTime);
+          if (tailIntents.isNotEmpty) {
+            baseSlots.add(TimelineSlot(time: defaultTime, intents: tailIntents));
+          }
+        }
+      }
+    }
+
+    if (baseSlots.isEmpty) {
+      final intents = _recognizeSingleClause(t, defaultTime);
+      baseSlots.add(TimelineSlot(time: defaultTime, intents: intents));
+    }
+
+    return IntentResult(
+      timelineSlots: baseSlots,
+      source: 'rule',
+      reason: '规则匹配(单日期)',
+    );
+  }
+
+  // ===== 初始化和存储 =====
+
+  Future<void> init() async {
+    _prefs = await SharedPreferences.getInstance();
+    _loadPatterns();
+    _buildIndex();
+    await _ensurePresetLoaded();
+  }
+
+  Future<void> _ensurePresetLoaded() async {
+    final loaded = _prefs?.getBool(_presetLoadedKey) ?? false;
+    if (!loaded || _patterns.isEmpty) {
+      await loadPresetPatterns();
+      await _prefs?.setBool(_presetLoadedKey, true);
+    }
+  }
+
+  void _loadPatterns() {
+    final jsonStr = _prefs?.getString(_patternsKey);
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final list = jsonDecode(jsonStr) as List;
+        _patterns = list
+            .map((e) => UserPattern.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } catch (e) {
+        debugPrint('意图模式加载失败: $e');
+        _patterns = [];
+      }
+    }
+  }
+
+  Future<void> _savePatterns() async {
+    final jsonStr = jsonEncode(_patterns.map((p) => p.toJson()).toList());
+    await _prefs?.setString(_patternsKey, jsonStr);
+    _buildIndex();
+  }
+
+  // ===== 识别主入口 =====
+
+  Future<IntentResult> recognize(String text) async {
+    final t = text.trim();
+    if (t.isEmpty) {
+      return IntentResult.single(IntentType.general, {}, 0, 'rule', '空输入');
+    }
+
+    final localResult = _matchLocalPattern(t);
+    if (localResult != null) {
+      final maxConf = localResult.allIntents.fold(0.0, (m, i) => i.confidence > m ? i.confidence : m);
+      if (maxConf >= _localConfidenceThreshold) {
+        localMatchCount++;
+        return localResult;
+      }
+    }
+
+    if (!_llm.isConfigured) {
+      return _ruleBasedRecognize(t);
+    }
+
+    llmCallCount++;
+    final llmResult = await _llmRecognize(t);
+
+    _learnPattern(t, llmResult);
+
+    return llmResult;
+  }
+
+  // ===== 本地模式匹配 =====
+
+  IntentResult? _matchLocalPattern(String text) {
+    if (_patterns.isEmpty) return null;
+
+    for (final p in _patterns) {
+      if (p.inputText == text) {
+        final score = _calculatePatternScore(p);
+        if (score >= 1.0) {
+          return IntentResult(
+            timelineSlots: p.slots,
+            source: 'local',
+            reason: '历史模式匹配(完全匹配，出现${p.count}次)',
+          );
+        }
+      }
+    }
+
+    final candidates = _findCandidates(text);
+    if (candidates.isEmpty) return null;
+
+    UserPattern? bestMatch;
+    double bestWeightedScore = 0;
+    double bestSimilarity = 0;
+
+    for (final p in candidates) {
+      final patternScore = _calculatePatternScore(p);
+      if (patternScore < 0.5) continue;
+
+      final similarity = _textSimilarity(text, p.inputText);
+      if (similarity < 0.5) continue;
+
+      final weightedScore = similarity * (0.6 + patternScore * 0.4);
+
+      if (weightedScore > bestWeightedScore) {
+        bestWeightedScore = weightedScore;
+        bestSimilarity = similarity;
+        bestMatch = p;
+      }
+    }
+
+    if (bestMatch != null && bestWeightedScore >= 0.65) {
+      final extractedSlots = bestMatch.slots.map((slot) {
+        final newIntents = slot.intents.map((intent) {
+          final patternScore = _calculatePatternScore(bestMatch!);
+          final adjustedConfidence = (intent.confidence * 0.5 + bestSimilarity * 0.3 + patternScore * 0.2).clamp(0.0, 1.0);
+          return IntentItem(
+            type: intent.type,
+            slots: intent.slots,
+            confidence: adjustedConfidence,
+          );
+        }).toList();
+        return TimelineSlot(time: slot.time, intents: newIntents);
+      }).toList();
+
+      return IntentResult(
+        timelineSlots: extractedSlots,
+        source: 'local',
+        reason: '历史模式匹配(相似度${(bestSimilarity * 100).round()}%)',
+      );
+    }
+
+    return null;
   }
 
   // ===== LLM 意图识别 =====
@@ -527,18 +1049,18 @@ class IntentRecognitionService {
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        final content = json['choices']?[0]?['message']?['content'] as String?;
-        if (content != null) {
-          final cleanContent = content
-              .replaceAll(RegExp(r'```json\s*'), '')
-              .replaceAll(RegExp(r'```\s*'), '')
-              .trim();
-          final result = jsonDecode(cleanContent);
-          return IntentResult.fromJson({
-            ...result as Map<String, dynamic>,
-            'source': 'llm',
-          });
+        final jsonResponse = jsonDecode(response.body);
+        final content = jsonResponse['choices'][0]['message']['content'] as String;
+        try {
+          final result = jsonDecode(content);
+          if (result is Map<String, dynamic>) {
+            return IntentResult.fromJson({
+              ...result,
+              'source': 'llm',
+            });
+          }
+        } catch (e) {
+          debugPrint('LLM 返回解析失败: $e');
         }
       }
     } catch (e) {
@@ -551,25 +1073,37 @@ class IntentRecognitionService {
   // ===== 本地学习 =====
 
   void _learnPattern(String text, IntentResult result) {
-    final existing = _patterns.where((p) => p.inputText == text).firstOrNull;
+    final template = _generatePatternTemplate(text, result);
+    final semanticExisting = _patterns.where((p) => _isSemanticallySame(p, UserPattern(
+      inputText: template,
+      slots: result.timelineSlots,
+      count: 1,
+      lastUsed: DateTime.now(),
+    ))).firstOrNull;
+
+    final existing = _patterns.where((p) => p.inputText == template).firstOrNull ?? semanticExisting;
 
     if (existing != null) {
       existing.count++;
       existing.lastUsed = DateTime.now();
-      existing.slots = result.timelineSlots;
+
+      if (_shouldUpdateIntent(existing.slots, result.timelineSlots)) {
+        existing.slots = result.timelineSlots;
+      }
     } else {
       _patterns.add(UserPattern(
-        inputText: text,
+        inputText: template,
         slots: result.timelineSlots,
         count: 1,
         lastUsed: DateTime.now(),
       ));
 
       if (_patterns.length > _maxPatterns) {
-        _patterns.sort((a, b) =>
-          a.count.compareTo(b.count) == 0
-            ? a.lastUsed.compareTo(b.lastUsed)
-            : a.count.compareTo(b.count));
+        _patterns.sort((a, b) {
+          final scoreA = _calculatePatternScore(a);
+          final scoreB = _calculatePatternScore(b);
+          return scoreB.compareTo(scoreA);
+        });
         _patterns.removeRange(0, _patterns.length - _maxPatterns);
       }
     }
@@ -577,25 +1111,161 @@ class IntentRecognitionService {
     _savePatterns();
   }
 
-  /// 手动添加/更新模式（用于用户纠正）
+  String _generatePatternTemplate(String text, IntentResult result) {
+    final timePoints = _extractAllTimePoints(text);
+    final dateOffsets = _extractAllDateOffsets(text);
+
+    String timeStr = '';
+    if (timePoints.isNotEmpty) {
+      timeStr = timePoints.map((tp) => tp['time']).join(',');
+    }
+
+    String dateStr = '';
+    if (dateOffsets.length > 1) {
+      dateStr = dateOffsets.join(',');
+    } else if (dateOffsets.isNotEmpty && dateOffsets[0] > 0) {
+      dateStr = dateOffsets[0].toString();
+    }
+
+    var content = '';
+    if (result.timelineSlots.isNotEmpty &&
+        result.timelineSlots.first.intents.isNotEmpty) {
+      final intent = result.timelineSlots.first.intents.first;
+      content = intent.slots['content']?.toString() ?? '';
+      if (content.isEmpty) {
+        content = intent.slots['keyword']?.toString() ?? '';
+      }
+    }
+
+    if (content.isEmpty) {
+      content = _purifyAgendaContent(text);
+    }
+
+    if (content.isEmpty) {
+      return text;
+    }
+
+    final parts = <String>[];
+    if (dateStr.isNotEmpty) parts.add(dateStr);
+    if (timeStr.isNotEmpty) parts.add(timeStr);
+    parts.add(content);
+
+    return parts.join('|');
+  }
+
+  bool _shouldUpdateIntent(List<TimelineSlot> existing, List<TimelineSlot> newSlots) {
+    if (existing.isEmpty || newSlots.isEmpty) return true;
+
+    final existingTypes = existing.expand((s) => s.intents.map((i) => i.type)).toSet();
+    final newTypes = newSlots.expand((s) => s.intents.map((i) => i.type)).toSet();
+
+    if (existingTypes != newTypes) return true;
+
+    for (var i = 0; i < existing.length && i < newSlots.length; i++) {
+      for (var j = 0; j < existing[i].intents.length && j < newSlots[i].intents.length; j++) {
+        final existingIntent = existing[i].intents[j];
+        final newIntent = newSlots[i].intents[j];
+        if (existingIntent.type != newIntent.type) return true;
+        final existingSlots = existingIntent.slots;
+        final newSlotsMap = newIntent.slots;
+        if (existingSlots.length != newSlotsMap.length) return true;
+        for (final key in existingSlots.keys) {
+          if (newSlotsMap[key] != existingSlots[key]) return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  // ===== 语义合并 =====
+
+  bool _isSemanticallySame(UserPattern p1, UserPattern p2) {
+    if (p1.inputText == p2.inputText) return true;
+
+    final type1 = _getPrimaryIntentType(p1);
+    final type2 = _getPrimaryIntentType(p2);
+    if (type1 != type2) return false;
+
+    final content1 = _getPatternContent(p1);
+    final content2 = _getPatternContent(p2);
+
+    if (content1.isNotEmpty && content2.isNotEmpty) {
+      if (content1 == content2) return true;
+      final contentSim = _textSimilarity(content1, content2);
+      if (contentSim >= 0.6) return true;
+    }
+
+    String t1 = _purifyAgendaContent(p1.inputText);
+    String t2 = _purifyAgendaContent(p2.inputText);
+    if (t1.isNotEmpty && t2.isNotEmpty) {
+      if (t1 == t2) return true;
+      final purifySim = _textSimilarity(t1, t2);
+      if (purifySim >= 0.6) return true;
+    }
+
+    final textSim = _textSimilarity(p1.inputText, p2.inputText);
+    return textSim >= 0.7;
+  }
+
+  String _getPatternContent(UserPattern p) {
+    if (p.slots.isEmpty) return '';
+    final contents = <String>[];
+    for (final slot in p.slots) {
+      for (final intent in slot.intents) {
+        final c = intent.slots['content']?.toString() ??
+            intent.slots['keyword']?.toString() ??
+            intent.slots['item_name']?.toString() ??
+            '';
+        if (c.isNotEmpty) contents.add(c);
+      }
+    }
+    return contents.join('|');
+  }
+
+  IntentType _getPrimaryIntentType(UserPattern p) {
+    if (p.slots.isEmpty) return IntentType.general;
+    final firstSlot = p.slots.first;
+    if (firstSlot.intents.isEmpty) return IntentType.general;
+    return firstSlot.intents.first.type;
+  }
+
+  // ===== 模式管理 API =====
+
+  List<UserPattern> get allPatterns => List.unmodifiable(_patterns);
+
+  List<UserPattern> getAllPatterns() => allPatterns;
+
   Future<void> addPattern(String text, List<TimelineSlot> slots) async {
     final existing = _patterns.where((p) => p.inputText == text).firstOrNull;
+
     if (existing != null) {
       existing.slots = slots;
       existing.count++;
       existing.lastUsed = DateTime.now();
     } else {
-      _patterns.add(UserPattern(
+      final semanticMatch = _patterns.where((p) => _isSemanticallySame(p, UserPattern(
         inputText: text,
         slots: slots,
-        count: 3,
+        count: 1,
         lastUsed: DateTime.now(),
-      ));
+      ))).firstOrNull;
+
+      if (semanticMatch != null) {
+        semanticMatch.count++;
+        semanticMatch.lastUsed = DateTime.now();
+      } else {
+        _patterns.add(UserPattern(
+          inputText: text,
+          slots: slots,
+          count: 3,
+          lastUsed: DateTime.now(),
+        ));
+      }
     }
     await _savePatterns();
   }
 
-  /// 更新模式（编辑用，保留count）
   Future<void> updatePattern(String oldText, String newText, List<TimelineSlot> slots) async {
     final existingIdx = _patterns.indexWhere((p) => p.inputText == oldText);
     if (existingIdx < 0) return;
@@ -623,273 +1293,74 @@ class IntentRecognitionService {
     await _savePatterns();
   }
 
-  /// 删除模式
   Future<void> deletePattern(String text) async {
     _patterns.removeWhere((p) => p.inputText == text);
     await _savePatterns();
   }
 
-  // ===== 规则匹配（离线兜底，支持多意图） =====
+  List<List<UserPattern>> findSemanticDuplicates() {
+    final duplicates = <List<UserPattern>>[];
+    final visited = <String>{};
 
-  /// 从文本中提取时间，返回 HH:MM 格式
-  String? _extractTime(String text) {
-    final timeMatch = RegExp(r'(\d{1,2})(?:点|时)(\d{1,2})?(?:分|半)?').firstMatch(text);
-    if (timeMatch != null) {
-      final hour = int.tryParse(timeMatch.group(1) ?? '') ?? 0;
-      final minute = int.tryParse(timeMatch.group(2) ?? '') ?? 0;
-      if (timeMatch.group(0)!.contains('半') && timeMatch.group(2) == null) {
-        return '${hour.toString().padLeft(2, '0')}:30';
-      }
-      return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
-    }
-    return null;
-  }
+    for (final p1 in _patterns) {
+      if (visited.contains(p1.inputText)) continue;
 
-  IntentResult _ruleBasedRecognize(String t) {
-    final now = DateTime.now();
-    final defaultTime = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-
-    final timePoints = _extractAllTimePoints(t);
-    
-    if (timePoints.isEmpty) {
-      final intents = _recognizeSingleClause(t, defaultTime);
-      return IntentResult(
-        timelineSlots: [TimelineSlot(time: defaultTime, intents: intents)],
-        source: 'rule',
-        reason: '规则匹配(无时间点)',
-      );
-    }
-
-    final slots = <TimelineSlot>[];
-    String remainingText = t;
-
-    for (final timePoint in timePoints) {
-      final timeStr = timePoint['time'] as String;
-      final start = timePoint['start'] as int;
-      final end = timePoint['end'] as int;
-
-      String clause;
-      if (start > 0) {
-        final prevEnd = slots.isEmpty ? 0 : timePoints[slots.length - 1]['end'] as int;
-        clause = remainingText.substring(prevEnd, start).trim();
-      } else {
-        clause = remainingText.substring(start, end).trim();
-      }
-
-      if (clause.isEmpty && start > 0) {
-        final nextStart = timePoint['start'] as int;
-        final prevEnd = slots.isEmpty ? 0 : timePoints[slots.length - 1]['end'] as int;
-        clause = remainingText.substring(prevEnd, nextStart).trim();
-      }
-
-      if (clause.isEmpty) {
-        clause = remainingText.substring(start).trim();
-      }
-
-      final intents = _recognizeSingleClause(clause, timeStr);
-      if (intents.isNotEmpty) {
-        slots.add(TimelineSlot(time: timeStr, intents: intents));
-      }
-    }
-
-    final lastTimeEnd = timePoints.last['end'] as int;
-    final lastClause = t.substring(lastTimeEnd).trim();
-    if (lastClause.isNotEmpty) {
-      final intents = _recognizeSingleClause(lastClause, defaultTime);
-      if (intents.isNotEmpty) {
-        slots.add(TimelineSlot(time: defaultTime, intents: intents));
-      }
-    }
-
-    if (slots.isEmpty) {
-      final intents = _recognizeSingleClause(t, defaultTime);
-      slots.add(TimelineSlot(time: defaultTime, intents: intents));
-    }
-
-    return IntentResult(
-      timelineSlots: slots,
-      source: 'rule',
-      reason: '规则匹配(多时间点拆分)',
-    );
-  }
-
-  List<Map<String, dynamic>> _extractAllTimePoints(String text) {
-    final matches = RegExp(r'(\d{1,2})(?:点|时)(\d{1,2})?(?:分|半)?').allMatches(text);
-    final results = <Map<String, dynamic>>[];
-    
-    for (final match in matches) {
-      final hour = int.tryParse(match.group(1) ?? '') ?? 0;
-      final minute = int.tryParse(match.group(2) ?? '') ?? 0;
-      String timeStr;
-      if (match.group(0)!.contains('半') && match.group(2) == null) {
-        timeStr = '${hour.toString().padLeft(2, '0')}:30';
-      } else {
-        timeStr = '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
-      }
-      results.add({
-        'time': timeStr,
-        'start': match.start,
-        'end': match.end,
-      });
-    }
-    
-    results.sort((a, b) => (a['start'] as int).compareTo(b['start'] as int));
-    return results;
-  }
-
-  /// 从文本中提取日期偏移天数
-  int _extractDateOffset(String text) {
-    if (text.contains('大后天')) return 3;
-    if (text.contains('后天')) return 2;
-    if (text.contains('明天')) return 1;
-    if (text.contains('今天') || text.contains('今日')) return 0;
-    return 0;
-  }
-
-  List<IntentItem> _recognizeSingleClause(String clause, String timeStr) {
-    final intents = <IntentItem>[];
-    if (clause.isEmpty) return intents;
-
-    // 物品位置
-    final itemMatch = RegExp(
-      r'(?:把|将)?\s*([\u4e00-\u9fa5A-Za-z]{1,8}?)\s*(?:放|搁|塞)(?:在|到)?(?:了)?\s*([\u4e00-\u9fa5A-Za-z]+)',
-    ).firstMatch(clause);
-    if (itemMatch != null && itemMatch.groupCount >= 2) {
-      intents.add(IntentItem(
-        type: IntentType.itemLocation,
-        slots: {
-          'item_name': itemMatch.group(1)!.trim(),
-          'location': itemMatch.group(2)!
-              .trim()
-              .replaceAll(RegExp(r'^(在|到)'), '')
-              .replaceAll(RegExp(r'(中|里|上|下|内)$'), ''),
-        },
-        confidence: 0.8,
-      ));
-    }
-
-    // 购物
-    final buyMatch = RegExp(r'(?:刚去|去|到|在)?(.+?)(?:买了|买)(.+)').firstMatch(clause);
-    if (buyMatch != null) {
-      var store = buyMatch.group(1)!.trim();
-      store = store
-          .replaceAll(RegExp(r'^(刚去|去|到|在)'), '')
-          .trim();
-      final itemsText = buyMatch.group(2)!.trim();
-      
-      // 解析商品列表：数量+单位+名称 或 名称+数量+单位
-      final items = <Map<String, dynamic>>[];
-      final itemMatches = RegExp(
-        r'(\d+(?:\.\d+)?)\s*(片|粒|盒|瓶|个|包|袋|支|颗|毫升|克|斤|公斤|箱|条|把)\s*([\u4e00-\u9fa5A-Za-z]{2,10})'
-      ).allMatches(itemsText);
-      for (final m in itemMatches) {
-        items.add({
-          'name': m.group(3)!,
-          'quantity': double.parse(m.group(1)!),
-          'unit': m.group(2)!,
-        });
-      }
-      
-      // 另一种格式：名称+数量+单位
-      if (items.isEmpty) {
-        final itemMatches2 = RegExp(
-          r'([\u4e00-\u9fa5A-Za-z]{2,10})\s*(\d+(?:\.\d+)?)\s*(片|粒|盒|瓶|个|包|袋|支|颗|毫升|克|斤|公斤|箱|条|把)'
-        ).allMatches(itemsText);
-        for (final m in itemMatches2) {
-          items.add({
-            'name': m.group(1)!,
-            'quantity': double.parse(m.group(2)!),
-            'unit': m.group(3)!,
-          });
+      final group = <UserPattern>[p1];
+      for (final p2 in _patterns) {
+        if (p1.inputText == p2.inputText) continue;
+        if (visited.contains(p2.inputText)) continue;
+        if (_isSemanticallySame(p1, p2)) {
+          group.add(p2);
         }
       }
-      
-      final slots = <String, dynamic>{
-        'store': store,
-        'items_text': itemsText,
-      };
-      if (items.isNotEmpty) {
-        slots['items'] = items;
+
+      if (group.length > 1) {
+        duplicates.add(group);
+        for (final p in group) {
+          visited.add(p.inputText);
+        }
       }
-      
-      intents.add(IntentItem(
-        type: IntentType.shopping,
-        slots: slots,
-        confidence: 0.8,
-      ));
     }
 
-    // 事程创建关键词
-    final reminderKeywords = ['记得', '别忘了', '提醒我', '要记得', '一定要', '需要', '要做', '得去', '准备', '一会', '待会儿', '等一下', '回头'];
-    final futureTimeKeywords = ['明天', '下周', '下次', '以后'];
-    final dateOffset = _extractDateOffset(clause);
-    if (reminderKeywords.any((kw) => clause.contains(kw)) ||
-        futureTimeKeywords.any((kw) => clause.contains(kw))) {
-      final slots = <String, dynamic>{'content': clause};
-      if (dateOffset > 0) {
-        slots['date_offset'] = dateOffset;
+    return duplicates;
+  }
+
+  Future<void> mergeSemanticPatterns([List<String>? patternTexts]) async {
+    if (patternTexts == null || patternTexts.isEmpty) {
+      final duplicates = findSemanticDuplicates();
+      for (final group in duplicates) {
+        final texts = group.map((p) => p.inputText).toList();
+        await _mergeSemanticPatternGroup(texts);
       }
-      intents.add(IntentItem(
-        type: IntentType.agendaCreate,
-        slots: slots,
-        confidence: 0.75,
-      ));
+      return;
     }
 
-    // 事程完成
-    final completedKeywords = ['刚', '刚刚', '已经', '过了', '完了', '吃完了', '喝完了', '吃过了', '做完了'];
-    final pastSuffixes = ['完了', '过了', '好了'];
-    bool isCompleted = completedKeywords.any((kw) => clause.contains(kw)) ||
-        pastSuffixes.any((kw) => clause.endsWith(kw));
-    if (isCompleted && intents.isEmpty) {
-      intents.add(IntentItem(
-        type: IntentType.agendaComplete,
-        slots: {'keyword': clause},
-        confidence: 0.7,
-      ));
-    }
+    if (patternTexts.length < 2) return;
+    await _mergeSemanticPatternGroup(patternTexts);
+  }
 
-    // 库存消耗
-    final consumeMatches = RegExp(
-      r'(?:吃了|吃|喝了|喝|用了|用|服用|服)\s*([\u4e00-\u9fa5A-Za-z]{2,10})(?:\s+(\d+(?:\.\d+)?)\s*(片|粒|盒|瓶|个|包|袋|支|颗|毫升|克))?',
-    ).allMatches(clause);
-    for (final consumeMatch in consumeMatches) {
-      var itemName = consumeMatch.group(1)!.trim();
-      itemName = itemName
-          .replaceAll(RegExp(r'^(完|过|了|刚|刚刚)'), '')
-          .replaceAll(RegExp(r'(完|过|了)$'), '');
-      if (itemName.isEmpty) continue;
-      intents.add(IntentItem(
-        type: IntentType.inventoryConsume,
-        slots: {
-          'item_name': itemName,
-          'quantity': double.tryParse(consumeMatch.group(2) ?? '1') ?? 1.0,
-          'unit': consumeMatch.group(3) ?? '个',
-        },
-        confidence: 0.7,
-      ));
-    }
+  Future<void> _mergeSemanticPatternGroup(List<String> patternTexts) async {
+    final patternsToMerge = _patterns.where((p) => patternTexts.contains(p.inputText)).toList();
+    if (patternsToMerge.length < 2) return;
 
-    // 行为
-    final behaviorKeywords = ['吃', '喝', '睡', '运动', '散步', '跑步', '洗澡', '洗漱', '起床', '吃药', '吃饭', '午饭', '早饭', '晚饭', '喝水', '聊天'];
-    if (behaviorKeywords.any((kw) => clause.contains(kw)) && intents.isEmpty) {
-      intents.add(IntentItem(
-        type: IntentType.behavior,
-        slots: {'keyword': clause},
-        confidence: 0.7,
-      ));
-    }
+    final mergedSlots = patternsToMerge.expand((p) => p.slots).toList();
+    final totalCount = patternsToMerge.fold(0, (sum, p) => sum + p.count);
 
-    if (intents.isEmpty) {
-      intents.add(const IntentItem(type: IntentType.general, slots: {}, confidence: 0.5));
-    }
+    final mergedPattern = UserPattern(
+      inputText: patternsToMerge.first.inputText,
+      slots: mergedSlots,
+      count: totalCount,
+      lastUsed: DateTime.now(),
+    );
 
-    return intents;
+    for (final p in patternsToMerge) {
+      _patterns.remove(p);
+    }
+    _patterns.add(mergedPattern);
+    await _savePatterns();
   }
 
   // ===== 统计信息 =====
-
-  List<UserPattern> get allPatterns => List.unmodifiable(_patterns);
 
   Map<String, dynamic> getStats() {
     final sorted = List<UserPattern>.from(_patterns)
@@ -920,7 +1391,6 @@ class IntentRecognitionService {
     await _savePatterns();
   }
 
-  /// 加载预设常见模式（快速上手）
   Future<void> loadPresetPatterns() async {
     final presets = <UserPattern>[
       UserPattern(

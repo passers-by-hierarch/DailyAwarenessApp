@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:collection/collection.dart';
 import '../../../../layouts/secondary_layout.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/state/app_store.dart';
@@ -21,6 +22,7 @@ class _EditAgendaPageState extends State<EditAgendaPage> {
   String _selectedIcon = '📋';
   bool _isMustDo = false;
   AgendaLevel _level = AgendaLevel.normal;
+  AgendaCategory _category = AgendaCategory.custom;
   bool _initialized = false;
   String? _chainAfterId;
   int? _advanceReminder; // 单事程提前提醒分钟数（null=使用级别默认）
@@ -58,6 +60,7 @@ class _EditAgendaPageState extends State<EditAgendaPage> {
             ? Map<String, dynamic>.from(agenda.customReminderConfig!)
             : null;
         _useCustomReminder = agenda.customReminderConfig != null;
+        _category = agenda.category;
         if (_useCustomReminder) {
           _initCustomControllers();
         }
@@ -874,10 +877,16 @@ class _EditAgendaPageState extends State<EditAgendaPage> {
     final id = ModalRoute.of(context)?.settings.arguments as String?;
     final todayStr = store.todayStr;
     if (id != null) {
+      // 编辑前先保存旧值，用于后续查找关联副本
+      final oldAgenda = store.agendaItems.firstWhereOrNull((a) => a.id == id);
+      final oldContent = oldAgenda?.content ?? content;
+      final oldTime = oldAgenda?.time ?? _timeController.text;
+      final newContent = _timeController.text;
+
       store.updateAgenda(id, AgendaItem(
         id: id,
         content: content,
-        time: _timeController.text,
+        time: newContent,
         date: todayStr,
         note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
         voiceNote: _voiceNote,
@@ -886,8 +895,40 @@ class _EditAgendaPageState extends State<EditAgendaPage> {
         icon: _selectedIcon,
         chainAfterId: _chainAfterId,
         advanceReminder: _advanceReminder,
+        category: _category,
         customReminderConfig: _useCustomReminder ? _customReminderConfig : null,
       ));
+
+      // 同步模板与每日副本的 isMustDo/level，保持必做事程管理联动一致
+      if (_category == AgendaCategory.dailyMustDo) {
+        // 编辑的是每日副本：同步原始模板
+        final template = store.agendaItems.firstWhereOrNull((a) =>
+          a.content == oldContent &&
+          a.time == oldTime &&
+          a.category != AgendaCategory.dailyMustDo
+        );
+        if (template != null) {
+          store.updateAgenda(template.id, template.copyWith(
+            isMustDo: _isMustDo,
+            level: _level,
+          ));
+        }
+      } else {
+        // 编辑的是原始模板：只同步今天及未来的副本，历史副本级别保持不变
+        for (final copy in store.agendaItems.where((a) =>
+          a.category == AgendaCategory.dailyMustDo &&
+          a.content == oldContent &&
+          a.time == oldTime &&
+          a.date.compareTo(todayStr) >= 0
+        ).toList()) {
+          store.updateAgenda(copy.id, copy.copyWith(
+            isMustDo: _isMustDo,
+            level: _level,
+            content: content,
+            time: newContent,
+          ));
+        }
+      }
     } else {
       store.addAgenda(AgendaItem(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -903,6 +944,7 @@ class _EditAgendaPageState extends State<EditAgendaPage> {
         advanceReminder: _advanceReminder,
         note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
         voiceNote: _voiceNote,
+        category: AgendaCategory.custom,
         customReminderConfig: _useCustomReminder ? _customReminderConfig : null,
       ));
     }

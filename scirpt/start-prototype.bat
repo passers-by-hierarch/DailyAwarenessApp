@@ -1,8 +1,8 @@
 @echo off
-title DailyAwarenessApp - Prototype
+title 生活助手 - Prototype
 
 echo ==========================================
-echo   DailyAwarenessApp Prototype
+echo   生活助手 Prototype
 echo ==========================================
 echo.
 

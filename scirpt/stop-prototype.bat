@@ -1,8 +1,8 @@
 @echo off
-title DailyAwarenessApp - Stop
+title 生活助手 - Stop
 
 echo ==========================================
-echo   Stop DailyAwarenessApp Services
+echo   Stop 生活助手 Services
 echo ==========================================
 echo.
 

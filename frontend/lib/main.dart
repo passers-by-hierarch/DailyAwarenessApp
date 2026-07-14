@@ -19,7 +19,7 @@ void main() async {
   runApp(
     ChangeNotifierProvider(
       create: (_) => AppStore(),
-      child: const DailyAwarenessApp(),
+      child: const LifeAssistantApp(),
     ),
   );
 }

@@ -371,15 +371,7 @@ class _AskPageState extends State<AskPage> {
       ),
       child: Row(
         children: [
-          // 返回按钮
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: const Icon(
-              Icons.chevron_left,
-              size: 24,
-              color: AppColors.textPrimary,
-            ),
-          ),
+          const SizedBox(width: 8),
           // 居中标题
           Expanded(
             child: Center(

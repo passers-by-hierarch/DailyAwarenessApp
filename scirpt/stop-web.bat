@@ -1,8 +1,8 @@
 @echo off
-title DailyAwarenessApp - Stop Web
+title 生活助手 - Stop Web
 
 echo ==========================================
-echo   Stop DailyAwarenessApp Flutter Web
+echo   Stop 生活助手 Flutter Web
 echo ==========================================
 echo.
 

@@ -290,7 +290,11 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> clearAllData() async {
+    // 清除业务数据
     await _storage.clearAll();
+    // 清除 LLM 配置（API Key、接口地址等）
+    await _llm.saveConfig(const LlmConfig());
+    // 重新加载默认数据
     _loadFromStorage();
     notifyListeners();
   }
@@ -689,6 +693,9 @@ class AppStore extends ChangeNotifier {
         matchedAgenda: '${agenda.time}${agenda.content}',
         linkedAgendaId: agenda.id,
       ));
+      // 确保 _agendaItems 变更一定触发 UI 刷新
+      // （addTimelineRecord 可能因去重直接 return，不调用 notifyListeners）
+      notifyListeners();
     } else {
       notifyListeners();
     }
@@ -3846,7 +3853,7 @@ class AppStore extends ChangeNotifier {
   }
 
   /// 获取事程完成排行（基于事程数据，不是时间线）
-  List<Map<String, dynamic>> getAgendaRanking(String range, {DateTime? customStart, DateTime? customEnd}) {
+  List<Map<String, dynamic>> getAgendaRanking(String range, {DateTime? customStart, DateTime? customEnd, String? sortBy = 'score'}) {
     final now = this.now;
     DateTime startDate;
     DateTime endDate = now;
@@ -3877,7 +3884,7 @@ class AppStore extends ChangeNotifier {
     final endStr = '${endDate.year}-${endDate.month.toString().padLeft(2, '0')}-${endDate.day.toString().padLeft(2, '0')}';
 
     // 按内容分组统计
-    final stats = <String, Map<String, int>>{};
+    final stats = <String, Map<String, dynamic>>{};
     for (final a in _agendaItems) {
       if (a.date.compareTo(startStr) < 0 || a.date.compareTo(endStr) > 0) continue;
       final key = a.content;
@@ -3888,39 +3895,75 @@ class AppStore extends ChangeNotifier {
           'expired': 0,
           'skipped': 0,
           'streak': 0,
+          'level': a.level,
         };
       }
-      stats[key]!['total'] = stats[key]!['total']! + 1;
+      stats[key]!['total'] = (stats[key]!['total'] as int) + 1;
       if (a.status == AgendaStatus.completed) {
-        stats[key]!['completed'] = stats[key]!['completed']! + 1;
-        if (a.streak > (stats[key]!['streak'] ?? 0)) {
+        stats[key]!['completed'] = (stats[key]!['completed'] as int) + 1;
+        if (a.streak > (stats[key]!['streak'] as int)) {
           stats[key]!['streak'] = a.streak;
         }
       } else if (a.status == AgendaStatus.expired) {
-        stats[key]!['expired'] = stats[key]!['expired']! + 1;
+        stats[key]!['expired'] = (stats[key]!['expired'] as int) + 1;
       } else if (a.status == AgendaStatus.skipped) {
-        stats[key]!['skipped'] = stats[key]!['skipped']! + 1;
+        stats[key]!['skipped'] = (stats[key]!['skipped'] as int) + 1;
       }
     }
 
-    // 转换为列表并排序
+    // 转换为列表并按综合评分排序
     final result = stats.entries.map((e) {
-      final total = e.value['total'] ?? 0;
-      final completed = e.value['completed'] ?? 0;
+      final total = e.value['total'] as int;
+      final completed = e.value['completed'] as int;
+      final streak = e.value['streak'] as int;
       final rate = total > 0 ? ((completed / total) * 100).round() : 0;
+      final level = e.value['level'] as AgendaLevel;
+
+      // 综合评分：完成率(40%) + 连续天数(30%) + 总数(20%) + 级别权重(10%)
+      final levelWeight = _getLevelWeight(level);
+      final score = rate * 0.4 + streak * 2 * 0.3 + total * 0.2 + levelWeight * 0.1;
+
       return {
         'content': e.key,
         'total': total,
         'completed': completed,
-        'expired': e.value['expired'] ?? 0,
-        'skipped': e.value['skipped'] ?? 0,
-        'streak': e.value['streak'] ?? 0,
+        'expired': e.value['expired'] as int,
+        'skipped': e.value['skipped'] as int,
+        'streak': streak,
         'rate': rate,
+        'level': level,
+        'score': score,
       };
     }).toList();
 
-    result.sort((a, b) => (b['streak'] as int).compareTo(a['streak'] as int));
+    switch (sortBy) {
+      case 'rate':
+        result.sort((a, b) => (b['rate'] as int).compareTo(a['rate'] as int));
+        break;
+      case 'streak':
+        result.sort((a, b) => (b['streak'] as int).compareTo(a['streak'] as int));
+        break;
+      case 'total':
+        result.sort((a, b) => (b['total'] as int).compareTo(a['total'] as int));
+        break;
+      case 'score':
+      default:
+        result.sort((a, b) => (b['score'] as double).compareTo(a['score'] as double));
+    }
     return result;
+  }
+
+  int _getLevelWeight(AgendaLevel level) {
+    switch (level) {
+      case AgendaLevel.mustDoLong:
+        return 100;
+      case AgendaLevel.mustDoShort:
+        return 80;
+      case AgendaLevel.important:
+        return 50;
+      case AgendaLevel.normal:
+        return 20;
+    }
   }
 
   int _statusToInt(AgendaStatus status) {
@@ -3957,12 +4000,13 @@ class AppStore extends ChangeNotifier {
       case 'week':
         final weekStart = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
         startDate = weekStart;
-        dayCount = now.weekday;
+        dayCount = 7;
         break;
       case 'month':
         final firstDay = DateTime(now.year, now.month, 1);
+        final lastDay = DateTime(now.year, now.month + 1, 0);
         startDate = firstDay;
-        dayCount = now.day;
+        dayCount = lastDay.day;
         break;
       case 'custom':
         if (customStart != null && customEnd != null) {
@@ -3978,9 +4022,9 @@ class AppStore extends ChangeNotifier {
         startDate = now.subtract(const Duration(days: 6));
     }
 
-    if (dayCount > 31) {
+    if (range != 'custom' && dayCount > 31) {
       startDate = DateTime(now.year, now.month, 1);
-      dayCount = now.day;
+      dayCount = DateTime(now.year, now.month + 1, 0).day;
     }
 
     // 日期标签
@@ -4044,12 +4088,13 @@ class AppStore extends ChangeNotifier {
       case 'week':
         final weekStart = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
         startDate = weekStart;
-        dayCount = now.weekday;
+        dayCount = 7;
         break;
       case 'month':
         final firstDay = DateTime(now.year, now.month, 1);
+        final lastDay = DateTime(now.year, now.month + 1, 0);
         startDate = firstDay;
-        dayCount = now.day;
+        dayCount = lastDay.day;
         break;
       case 'custom':
         if (customStart != null && customEnd != null) {
@@ -4065,9 +4110,9 @@ class AppStore extends ChangeNotifier {
         startDate = now.subtract(const Duration(days: 6));
     }
 
-    if (dayCount > 31) {
+    if (range != 'custom' && dayCount > 31) {
       startDate = DateTime(now.year, now.month, 1);
-      dayCount = 31;
+      dayCount = DateTime(now.year, now.month + 1, 0).day;
     }
 
     final result = <Map<String, dynamic>>[];
@@ -4232,8 +4277,8 @@ class AppStore extends ChangeNotifier {
   }
 
   /// 事程按级别分组排行
-  Map<String, List<Map<String, dynamic>>> getAgendaRankingByLevel(String range, {DateTime? customStart, DateTime? customEnd}) {
-    final ranking = getAgendaRanking(range, customStart: customStart, customEnd: customEnd);
+  Map<String, List<Map<String, dynamic>>> getAgendaRankingByLevel(String range, {DateTime? customStart, DateTime? customEnd, String? sortBy}) {
+    final ranking = getAgendaRanking(range, customStart: customStart, customEnd: customEnd, sortBy: sortBy);
 
     final mustDoLong = <Map<String, dynamic>>[];
     final mustDoShort = <Map<String, dynamic>>[];
