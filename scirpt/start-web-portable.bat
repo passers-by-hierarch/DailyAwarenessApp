@@ -103,8 +103,24 @@ endlocal
 exit /b 0
 
 :find_git
+    if defined USERPROFILE (
+        for %%s in ("Program Files\Git" "Program Files (x86)\Git" Git git Downloads\Git Downloads\git 下载\Git 下载\git "Downloads\Program Files\Git" Desktop\Git Desktop\git 桌面\Git 桌面\git tools\Git tools\git dev\Git dev\git soft\Git soft\git software\Git software\git app\Git app\git) do (
+            if exist "%USERPROFILE%\%%~s\cmd\git.exe" (
+                set "PATH=%USERPROFILE%\%%~s\cmd;%USERPROFILE%\%%~s\bin;!PATH!"
+                echo Found Git at %USERPROFILE%\%%~s
+                echo Found Git at %USERPROFILE%\%%~s >> "%LOG_FILE%"
+                exit /b 0
+            )
+            if exist "%USERPROFILE%\%%~s\bin\git.exe" (
+                set "PATH=%USERPROFILE%\%%~s\bin;!PATH!"
+                echo Found Git at %USERPROFILE%\%%~s
+                echo Found Git at %USERPROFILE%\%%~s >> "%LOG_FILE%"
+                exit /b 0
+            )
+        )
+    )
     for %%d in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
-        for %%s in ("Program Files\Git" "Program Files (x86)\Git" Git git tools\Git tools\git dev\Git dev\git soft\Git soft\git software\Git software\git app\Git app\git) do (
+        for %%s in ("Program Files\Git" "Program Files (x86)\Git" Git git downloads\Git downloads\git 下载\Git 下载\git tools\Git tools\git dev\Git dev\git soft\Git soft\git software\Git software\git app\Git app\git) do (
             if exist "%%d:\%%~s\cmd\git.exe" (
                 set "PATH=%%d:\%%~s\cmd;%%d:\%%~s\bin;!PATH!"
                 echo Found Git at %%d:\%%~s
@@ -119,11 +135,108 @@ exit /b 0
             )
         )
     )
+    echo Fuzzy searching for Git...
+    echo Fuzzy searching for Git... >> "%LOG_FILE%"
+    if defined USERPROFILE (
+        for /d %%f in ("%USERPROFILE%\*git*") do (
+            if exist "%%f\cmd\git.exe" (
+                set "PATH=%%f\cmd;%%f\bin;!PATH!"
+                echo Found Git at %%f
+                echo Found Git at %%f >> "%LOG_FILE%"
+                exit /b 0
+            )
+            if exist "%%f\bin\git.exe" (
+                set "PATH=%%f\bin;!PATH!"
+                echo Found Git at %%f
+                echo Found Git at %%f >> "%LOG_FILE%"
+                exit /b 0
+            )
+        )
+        for %%u in (Downloads 下载 Desktop 桌面 Documents 文档 "My Documents" tools dev soft software app sdk) do (
+            if exist "%USERPROFILE%\%%~u\" (
+                for /d %%f in ("%USERPROFILE%\%%~u\*git*") do (
+                    if exist "%%f\cmd\git.exe" (
+                        set "PATH=%%f\cmd;%%f\bin;!PATH!"
+                        echo Found Git at %%f
+                        echo Found Git at %%f >> "%LOG_FILE%"
+                        exit /b 0
+                    )
+                    if exist "%%f\bin\git.exe" (
+                        set "PATH=%%f\bin;!PATH!"
+                        echo Found Git at %%f
+                        echo Found Git at %%f >> "%LOG_FILE%"
+                        exit /b 0
+                    )
+                )
+            )
+        )
+    )
+    for %%d in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
+        if exist "%%d:\" (
+            for /d %%f in ("%%d:\*git*") do (
+                if exist "%%f\cmd\git.exe" (
+                    set "PATH=%%f\cmd;%%f\bin;!PATH!"
+                    echo Found Git at %%f
+                    echo Found Git at %%f >> "%LOG_FILE%"
+                    exit /b 0
+                )
+                if exist "%%f\bin\git.exe" (
+                    set "PATH=%%f\bin;!PATH!"
+                    echo Found Git at %%f
+                    echo Found Git at %%f >> "%LOG_FILE%"
+                    exit /b 0
+                )
+            )
+        )
+    )
+    echo Deep searching for Git (this may take a few seconds)...
+    echo Deep searching for Git... >> "%LOG_FILE%"
+    for /f "delims=" %%p in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%find-tool.ps1" -ToolName git -ExeName "cmd\git.exe" 2^>nul') do (
+        if exist "%%p\cmd\git.exe" (
+            set "PATH=%%p\cmd;%%p\bin;!PATH!"
+        ) else (
+            set "PATH=%%p\bin;!PATH!"
+        )
+        echo Found Git at %%p
+        echo Found Git at %%p >> "%LOG_FILE%"
+        exit /b 0
+    )
+    echo.
+    echo ===========================================
+    echo   Automatic search could not find Git
+    echo ===========================================
+    set /p USER_GIT="Please enter Git installation path (e.g. D:\\Program Files\\Git), press Enter to skip: "
+    if defined USER_GIT (
+        if exist "!USER_GIT!\cmd\git.exe" (
+            set "PATH=!USER_GIT!\cmd;!USER_GIT!\bin;!PATH!"
+            echo Found Git at !USER_GIT!
+            echo Found Git at !USER_GIT! >> "%LOG_FILE%"
+            exit /b 0
+        )
+        if exist "!USER_GIT!\bin\git.exe" (
+            set "PATH=!USER_GIT!\bin;!PATH!"
+            echo Found Git at !USER_GIT!
+            echo Found Git at !USER_GIT! >> "%LOG_FILE%"
+            exit /b 0
+        )
+        echo Path invalid: !USER_GIT!
+        echo Path invalid: !USER_GIT! >> "%LOG_FILE%"
+    )
     exit /b 1
 
 :find_flutter
+    if defined USERPROFILE (
+        for %%s in (flutter "flutter\flutter" Downloads\flutter "Downloads\flutter\flutter" 下载\flutter "下载\flutter\flutter" Desktop\flutter "Desktop\flutter\flutter" 桌面\flutter "桌面\flutter\flutter" Documents\flutter "Documents\flutter\flutter" 文档\flutter "文档\flutter\flutter" "My Documents\flutter" tools\flutter "tools\flutter\flutter" dev\flutter "dev\flutter\flutter" soft\flutter software\flutter app\flutter sdk\flutter "Program Files\flutter" "Program Files (x86)\flutter") do (
+            if exist "%USERPROFILE%\%%~s\bin\flutter.bat" (
+                set "PATH=%USERPROFILE%\%%~s\bin;!PATH!"
+                echo Found Flutter at %USERPROFILE%\%%~s
+                echo Found Flutter at %USERPROFILE%\%%~s >> "%LOG_FILE%"
+                exit /b 0
+            )
+        )
+    )
     for %%d in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
-        for %%s in (flutter "flutter\flutter" tools\flutter "tools\flutter\flutter" dev\flutter "dev\flutter\flutter" soft\flutter software\flutter app\flutter sdk\flutter) do (
+        for %%s in (flutter "flutter\flutter" tools\flutter "tools\flutter\flutter" dev\flutter "dev\flutter\flutter" soft\flutter software\flutter app\flutter sdk\flutter downloads\flutter "downloads\flutter\flutter" 下载\flutter "下载\flutter\flutter" "Program Files\flutter" "Program Files (x86)\flutter") do (
             if exist "%%d:\%%~s\bin\flutter.bat" (
                 set "PATH=%%d:\%%~s\bin;!PATH!"
                 echo Found Flutter at %%d:\%%~s
@@ -131,5 +244,82 @@ exit /b 0
                 exit /b 0
             )
         )
+    )
+    echo Fuzzy searching for Flutter...
+    echo Fuzzy searching for Flutter... >> "%LOG_FILE%"
+    if defined USERPROFILE (
+        for /d %%f in ("%USERPROFILE%\*flutter*") do (
+            if exist "%%f\bin\flutter.bat" (
+                set "PATH=%%f\bin;!PATH!"
+                echo Found Flutter at %%f
+                echo Found Flutter at %%f >> "%LOG_FILE%"
+                exit /b 0
+            )
+            if exist "%%f\flutter\bin\flutter.bat" (
+                set "PATH=%%f\flutter\bin;!PATH!"
+                echo Found Flutter at %%f\flutter
+                echo Found Flutter at %%f\flutter >> "%LOG_FILE%"
+                exit /b 0
+            )
+        )
+        for %%u in (Downloads 下载 Desktop 桌面 Documents 文档 "My Documents" tools dev soft software app sdk) do (
+            if exist "%USERPROFILE%\%%~u\" (
+                for /d %%f in ("%USERPROFILE%\%%~u\*flutter*") do (
+                    if exist "%%f\bin\flutter.bat" (
+                        set "PATH=%%f\bin;!PATH!"
+                        echo Found Flutter at %%f
+                        echo Found Flutter at %%f >> "%LOG_FILE%"
+                        exit /b 0
+                    )
+                    if exist "%%f\flutter\bin\flutter.bat" (
+                        set "PATH=%%f\flutter\bin;!PATH!"
+                        echo Found Flutter at %%f\flutter
+                        echo Found Flutter at %%f\flutter >> "%LOG_FILE%"
+                        exit /b 0
+                    )
+                )
+            )
+        )
+    )
+    for %%d in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
+        if exist "%%d:\" (
+            for /d %%f in ("%%d:\*flutter*") do (
+                if exist "%%f\bin\flutter.bat" (
+                    set "PATH=%%f\bin;!PATH!"
+                    echo Found Flutter at %%f
+                    echo Found Flutter at %%f >> "%LOG_FILE%"
+                    exit /b 0
+                )
+                if exist "%%f\flutter\bin\flutter.bat" (
+                    set "PATH=%%f\flutter\bin;!PATH!"
+                    echo Found Flutter at %%f\flutter
+                    echo Found Flutter at %%f\flutter >> "%LOG_FILE%"
+                    exit /b 0
+                )
+            )
+        )
+    )
+    echo Deep searching for Flutter (this may take a few seconds)...
+    echo Deep searching for Flutter... >> "%LOG_FILE%"
+    for /f "delims=" %%p in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%find-tool.ps1" -ToolName flutter -ExeName "bin\flutter.bat" 2^>nul') do (
+        set "PATH=%%p\bin;!PATH!"
+        echo Found Flutter at %%p
+        echo Found Flutter at %%p >> "%LOG_FILE%"
+        exit /b 0
+    )
+    echo.
+    echo ===========================================
+    echo   Automatic search could not find Flutter
+    echo ===========================================
+    set /p USER_FLUTTER="Please enter Flutter installation path (e.g. D:\\flutter), press Enter to skip: "
+    if defined USER_FLUTTER (
+        if exist "!USER_FLUTTER!\bin\flutter.bat" (
+            set "PATH=!USER_FLUTTER!\bin;!PATH!"
+            echo Found Flutter at !USER_FLUTTER!
+            echo Found Flutter at !USER_FLUTTER! >> "%LOG_FILE%"
+            exit /b 0
+        )
+        echo Path invalid: !USER_FLUTTER!
+        echo Path invalid: !USER_FLUTTER! >> "%LOG_FILE%"
     )
     exit /b 1
