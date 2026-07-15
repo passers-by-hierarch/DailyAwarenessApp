@@ -26,7 +26,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [1/5] Checking Project Structure...
+echo [1/6] Checking Project Structure...
 if not exist "pubspec.yaml" (
     echo ERROR: pubspec.yaml not found!
     echo Expected: %PROJECT_DIR%
@@ -38,7 +38,7 @@ echo OK: Project valid
 echo OK: Project valid >> "%LOG_FILE%"
 echo.
 
-echo [2/5] Checking Git...
+echo [2/6] Checking Git...
 where git >nul 2>&1
 if errorlevel 1 (
     echo Git not in PATH, searching...
@@ -56,7 +56,7 @@ echo OK: Git ready
 echo OK: Git ready >> "%LOG_FILE%"
 echo.
 
-echo [3/5] Checking Flutter...
+echo [3/6] Checking Flutter...
 where flutter >nul 2>&1
 if errorlevel 1 (
     echo Flutter not in PATH, searching...
@@ -74,7 +74,24 @@ echo OK: Flutter ready
 echo OK: Flutter ready >> "%LOG_FILE%"
 echo.
 
-echo [4/5] Getting Dependencies...
+echo [4/6] Checking Developer Mode...
+powershell -NoProfile -Command "$v=(Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Name 'AllowDevelopmentWithoutDevLicense' -ErrorAction SilentlyContinue).AllowDevelopmentWithoutDevLicense; if ($v -eq 1) { exit 0 } else { exit 1 }" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo WARNING: Windows Developer Mode is not enabled!
+    echo Flutter requires Developer Mode to build with plugins.
+    echo.
+    echo Please enable it:
+    echo   1. Press Win + I to open Settings
+    echo   2. Privacy and Security -^> For developers
+    echo   3. Turn ON "Developer Mode"
+    echo.
+    pause
+)
+echo OK: Developer Mode checked
+echo.
+
+echo [5/6] Getting Dependencies...
 set "PUB_HOSTED_URL=https://pub.flutter-io.cn"
 set "FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn"
 call flutter pub get >> "%LOG_FILE%" 2>&1
@@ -88,7 +105,7 @@ echo OK: Dependencies ready
 echo OK: Dependencies ready >> "%LOG_FILE%"
 echo.
 
-echo [5/5] Starting Daily Awareness...
+echo [6/6] Starting Daily Awareness...
 echo Visit: http://localhost:8088
 echo Press Ctrl+C to stop
 echo ===========================================
